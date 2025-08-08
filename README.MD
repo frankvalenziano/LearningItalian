@@ -57,7 +57,7 @@ The CEFR is an internationally recognized framework for describing language abil
 ## Actionable Plan for Each CEFR Level
 
 ### A1 (Beginner)
-1. **Vocabulary:** Learn 1000 essential words (greetings, numbers, days, food, family).
+1. **Vocabulary:** Learn 1000 essential words (greetings √, numbers √, days √, food √, family √).
 2. **Grammar:** Study present tense, articles, basic sentence structure.
 3. **Listening:** Practice with beginner audio (podcasts, dialogues).
 4. **Speaking:** Use language apps, repeat phrases, introduce yourself.
@@ -65,7 +65,7 @@ The CEFR is an internationally recognized framework for describing language abil
 6. **Writing:** Write simple sentences and fill out forms.
 
 ### A2 (Elementary)
-1. **Vocabulary:** Expand to 2000 words (shopping, travel, work).
+1. **Vocabulary:** Expand to 2000 words (shopping, travel, work, medical).
 2. **Grammar:** Learn past and future tenses, prepositions, adjectives.
 3. **Listening:** Watch short videos, follow simple conversations.
 4. **Speaking:** Role-play common scenarios, ask/answer questions.

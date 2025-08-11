@@ -18,7 +18,7 @@ The CEFR is an internationally recognized framework for describing language abil
 ## Basic Requirements to Progress Through Each CEFR Level
 
 ### A1 (Beginner)
-- Learn basic vocabulary and phrases
+- Learn basic vocabulary and phrases √
 - Understand simple grammar (present tense, articles, pronouns)
 - Practice listening and speaking in everyday situations
 

@@ -58,7 +58,7 @@ The CEFR is an internationally recognized framework for describing language abil
 
 ### A1 (Beginner)
 1. **Vocabulary:** Learn 1000 essential words (greetings √, numbers √, days √, food √, family √).
-2. **Grammar:** Study present tense, articles, basic sentence structure.
+2. **Grammar:** Study present tense √, articles √, basic sentence structure √.
 3. **Listening:** Practice with beginner audio (podcasts, dialogues).
 4. **Speaking:** Use language apps, repeat phrases, introduce yourself.
 5. **Reading:** Read short texts, signs, menus.

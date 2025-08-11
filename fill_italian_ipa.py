@@ -13,7 +13,7 @@
 # Usage:
 #   python fill_italian_ipa.py --input "/path/to/General Vocabulary.csv" --backup
 #   python fill_italian_ipa.py --input "/path/to/General Vocabulary.csv" --output updated.csv
-#   python fill_italian_ipa.py --input "/path/to/file.csv" --dry-run  # prints a summary only
+#   python fill_italian_ipa.py --input "/path/to/file.csv" --dry-run --debug
 #
 # Notes:
 # - This script assumes your CSV header has exactly: English, Italian, IPA, Tags, Notes
@@ -74,20 +74,42 @@ def main():
     ap.add_argument("--backup", action="store_true", help="Write a .bak file next to the input before overwriting.")
     ap.add_argument("--dry-run", action="store_true", help="Do not write anything; just print what would change.")
     ap.add_argument("--batch-size", type=int, default=128, help="How many rows to send to G2P at once.")
+    ap.add_argument("--debug", action="store_true", help="Print diagnostics about column names and empties.")
     args = ap.parse_args()
 
     df = pd.read_csv(args.input)
 
-    # Basic sanity check for expected columns
+    # Normalize column names (trim stray spaces, weird unicode spaces)
+    df.columns = [str(c).strip() for c in df.columns]
+
     expected_cols = ["English", "Italian", "IPA", "Tags", "Notes"]
     for col in expected_cols:
         if col not in df.columns:
             print(f"ERROR: expected column '{col}' not found. Columns present: {list(df.columns)}", file=sys.stderr)
             sys.exit(1)
 
-    # Find rows with missing/empty IPA but a non-empty Italian term
-    mask_missing = (df["IPA"].astype(str).str.strip() == "") & (df["Italian"].astype(str).str.strip() != "")
+    # Treat empties/NaN/placeholder strings as empty
+    ipa_raw = df["IPA"]
+    ita_raw = df["Italian"]
+    ipa_col = ipa_raw.fillna("")       # fill NaN first
+    ipa_col = ipa_col.astype(str).str.replace("\u00A0", " ", regex=False).str.strip()  # replace NBSP, trim
+    # Consider literal strings that mean 'empty'
+    ipa_col = ipa_col.where(~ipa_col.str.lower().isin(["nan", "none", "null"]), "")
+
+    ita_col = ita_raw.fillna("").astype(str).str.replace("\u00A0", " ", regex=False).str.strip()
+
+    # Determine which rows need IPA
+    mask_missing = (ipa_col == "") & (ita_col != "")
     todo = df[mask_missing].copy()
+
+    if args.debug:
+        print("Columns:", list(df.columns))
+        print("Total rows:", len(df))
+        print("IPA empty candidates:", int((ipa_col == '').sum()))
+        print("Italian non-empty:", int((ita_col != '').sum()))
+        print("Rows needing IPA:", len(todo))
+        # Show a couple sample rows (indices) that are missing
+        print("First 5 indices needing IPA:", todo.index[:5].tolist())
 
     if todo.empty:
         print("No empty IPA cells found. Nothing to do.")

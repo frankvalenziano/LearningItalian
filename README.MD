@@ -1,7 +1,8 @@
 # CEFR Italian Language Progression Project
 
 ## Project Purpose
-This project aims to provide a structured plan and requirements for progressing through the CEFR (Common European Framework of Reference for Languages) scales, from A1 (Beginner) to C2 (Mastery). It is designed to help learners understand what is expected at each level and offers actionable steps to achieve proficiency in Italian (or any other language using CEFR). The content in this deck was generated with a combination of wiktionary word lists and ChatGPT 5.
+This project aims to provide a structured plan and requirements for progressing through the CEFR (Common European Framework of Reference for Languages) scales, from A1 (Beginner) to C2 (Mastery) for the Italian language. It is designed to help learners understand what is expected at each level and offers actionable steps to achieve proficiency in Italian. The content in this deck was generated with a combination of word lists and ChatGPT 5.
+
 
 ## What Are the CEFR Scales?
 The CEFR is an internationally recognized framework for describing language ability. It divides proficiency into six levels:

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+
+## The Tatoeba Sentence Parser works fine but the Wiktionary portion isn't working, it always returns empty.
 import csv, json, re, time, pathlib, requests, sys
 from collections import deque
 import argparse

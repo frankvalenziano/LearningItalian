@@ -4,7 +4,7 @@
 This project aims to provide a structured plan and requirements for progressing through the CEFR (Common European Framework of Reference for Languages) scales, from A1 (Beginner) to C2 (Mastery) for the Italian language. It is designed to help learners understand what is expected at each level and offers actionable steps to achieve proficiency in Italian.
 
 Tools used:
-- Translations: Programatically generated with a local instance of LibreTranslate (https://libretranslate.com/)
+- Translations: DeepL API, Google Translate
 - Audio files: I used ChatGPT 5 to create the Anki addon "Generate Audio" (1056834290) which utilizes the Mac OSX 'say' command
 - IPA pronunciations: Generated programmatically with the Mac OSX 'espeak-ng' utility (part of homebrew)
 - Images: I used ChatGPT 5 to create the Anki addon "Get images from Wikipedia" (586353507) for the Notes that could be easily matched to Wikipedia. I used ChatGPT 5 to generate images in various styles for the Notes that needed custom images.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # file: deepl_fill_italian_translations.py
 # Usage examples:
-#   python3 deepl_fill_italian_translations.py -i "Frank's Master A1 CEFR Word List.csv"
+#   python3 deepl_fill_italian_translations.py -i "Frank's Core CEFR Word List.csv"
 #   python3 deepl_fill_italian_translations.py -i input.csv -o output.csv
 #   # Non-interactive examples (optional flags):
 #   python3 deepl_fill_italian_translations.py -i input.csv --mode vocab --overwrite

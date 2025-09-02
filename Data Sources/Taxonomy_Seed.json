@@ -1,0 +1,75 @@
+{
+  "Greetings": [
+    "hello","hi","hey","good morning","good afternoon","good evening","good night",
+    "how are you","nice to meet you","pleased to meet you","please","thank you",
+    "thanks","you’re welcome","excuse me","sorry","goodbye","bye","see you"
+  ],
+  "Numbers & Quantities": [
+    "zero","one","two","three","ten","hundred","thousand","million","first","second",
+    "third","half","quarter","dozen","pair","couple","several","many","few",
+    "more","less","most","least","enough","some","all","none","percent","per"
+  ],
+  "Calendar & Time": [
+    "today","tomorrow","yesterday","day","week","month","year","decade","century",
+    "monday","tuesday","wednesday","thursday","friday","saturday","sunday",
+    "january","february","march","april","may","june","july","august","september",
+    "october","november","december","spring","summer","autumn","fall","winter",
+    "morning","noon","afternoon","evening","night","hour","minute","second","o’clock"
+  ],
+  "Food": [
+    "apple","banana","orange","grape","strawberry","tomato","potato","onion","garlic","carrot",
+    "bread","rice","pasta","noodles","flour","sugar","salt","oil","butter","cheese",
+    "milk","yogurt","egg","fish","chicken","beef","pork","tofu","beans","lentils",
+    "water","tea","coffee","juice","wine","beer","breakfast","lunch","dinner","snack",
+    "salad","soup","pizza","sandwich","dessert","menu","bill","tip"
+  ],
+  "Social": [
+    "mother","father","parent","sister","brother","child","baby","son","daughter","family",
+    "friend","neighbor","coworker","colleague","boss","wife","husband","partner","couple","relative",
+    "woman","man","person","people","guest","host"
+  ],
+  "Shopping": [
+    "shop","store","market","mall","cart","basket","cashier","receipt","refund","discount",
+    "sale","price","cost","cheap","expensive","bargain","exchange","return","brand","size",
+    "small","medium","large","fit","try on","credit","debit","cash","euro","dollar"
+  ],
+  "Travel": [
+    "travel","trip","journey","tour","ticket","reservation","passport","visa","luggage","baggage",
+    "bag","suitcase","map","guide","direction","station","platform","stop","schedule","delay",
+    "bus","train","tram","metro","subway","taxi","car","rental","bicycle","plane","airport",
+    "hotel","hostel","check in","check out","boarding","gate"
+  ],
+  "Work & School": [
+    "job","work","career","profession","employee","employer","office","meeting","project","deadline",
+    "salary","resume","interview","promotion","computer","email","report","task","manager","team",
+    "school","class","lesson","homework","exam","test","teacher","student","university","lecture"
+  ],
+  "Medical & Health": [
+    "doctor","nurse","dentist","pharmacist","hospital","clinic","pharmacy","appointment","prescription","medicine",
+    "pill","tablet","vaccine","symptom","diagnosis","treatment","emergency","pain","fever","headache",
+    "cough","cold","flu","allergy","injury","wound","blood","heart","stomach","back"
+  ],
+  "Opinions & Communication": [
+    "yes","no","maybe","think","believe","guess","agree","disagree","prefer","recommend",
+    "suggest","argue","claim","explain","describe","discuss","ask","answer","say","tell",
+    "true","false","good","bad","better","worse","best","worst","compare","contrast"
+  ],
+  "Feelings & Emotions": [
+    "happy","sad","angry","afraid","scared","worried","nervous","anxious","excited","relieved",
+    "surprised","bored","tired","sleepy","hungry","thirsty","lonely","jealous","proud","ashamed",
+    "hopeful","grateful","frustrated","calm"
+  ],
+  "Events & Activities": [
+    "event","activity","holiday","festival","party","birthday","wedding","anniversary","picnic","celebration",
+    "meeting","conference","ceremony","concert","exhibition","game","match","sport","hobby","exercise",
+    "run","walk","swim","dance","sing","read","write","draw","cook","camp"
+  ],
+  "Idioms & Abstract": [
+    "by the way","in the long run","sooner or later","in the meantime","on the other hand",
+    "as a matter of fact","rule of thumb","break the ice","piece of cake","hit the road",
+    "under the weather","once in a while","back to square one","call it a day","out of the blue",
+    "hit the nail on the head","the ball is in your court","bark up the wrong tree","let the cat out of the bag","spill the beans",
+    "beat around the bush","cost an arm and a leg","pull someone’s leg","take it with a grain of salt","think outside the box",
+    "the tip of the iceberg","burn the midnight oil","cut to the chase","on the same page","keep an eye on"
+  ]
+}

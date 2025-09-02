@@ -13,7 +13,7 @@ Usage example:
       --input-csv   "Frank's Core CEFR Word List - Sentences.csv" \
       --output-csv  "Frank's Core CEFR Word List - Sentences.filled.csv" \
       --min-words 6 \
-      --max-words 28
+      --max-words 22
 """
 
 import argparse
@@ -413,18 +413,103 @@ def search_sources_for_term(
 # ---------------------------
 
 def load_csv_rows(path: Path) -> Tuple[List[str], List[Dict[str, str]]]:
+    """
+    Read CSV and return (header, rows), while defensively handling:
+      - Byte Order Mark (BOM) on the first header cell
+      - Extra columns present in some rows (DictReader stores these under the `restkey`,
+        or under `None` if restkey is not set)
+      - Stray/unknown keys not present in the header
+    """
     with path.open("r", encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
-        header = reader.fieldnames or []
-        rows = [row for row in reader]
+        # Capture unexpected extra columns in a temporary key to avoid `None` keys.
+        reader = csv.DictReader(f, restkey="_EXTRA", restval="")
+        raw_header = reader.fieldnames or []
+
+        # Normalize header cells (strip whitespace and BOM)
+        header: List[str] = []
+        for h in raw_header:
+            h2 = (h or "").strip().lstrip("\ufeff")
+            header.append(h2)
+
+        rows: List[Dict[str, str]] = []
+        extras_seen = 0
+
+        for row in reader:
+            # Remove legacy None key if present (older csv versions may still use it)
+            if None in row:
+                row.pop(None, None)
+
+            # Drop the temporary restkey bucket
+            if "_EXTRA" in row:
+                if row["_EXTRA"]:
+                    extras_seen += 1
+                row.pop("_EXTRA", None)
+
+            # Remove any keys not present in the normalized header
+            for k in list(row.keys()):
+                if k not in header:
+                    row.pop(k, None)
+
+            rows.append(row)
+
+    if extras_seen:
+        print(f"[WARN] {extras_seen} row(s) had extra columns beyond the header and were ignored.", file=sys.stderr)
+
     return header, rows
 
 
+
 def write_csv_rows(path: Path, header: List[str], rows: List[Dict[str, str]]) -> None:
+    """
+    Write rows using exactly the provided header. Any keys not in the header are ignored,
+    and missing keys are filled with empty strings to keep the output well-formed.
+    """
     with path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=header)
+        writer = csv.DictWriter(f, fieldnames=header, extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(rows)
+        for row in rows:
+            safe_row = {h: row.get(h, "") for h in header}
+            writer.writerow(safe_row)
+
+
+# ---------------------------
+# Streaming/append-safe output helper
+# ---------------------------
+def _prepare_output_writer(path: Path, header: List[str]) -> Tuple[csv.DictWriter, int]:
+    """
+    Open `path` for streaming writes. If the file already exists with the same header,
+    resume by appending new rows and return (writer, rows_already_written).
+    If it doesn't exist (or is empty), create it and write the header.
+    """
+    rows_written = 0
+    exists = path.exists() and path.stat().st_size > 0
+    mode = "a" if exists else "w"
+    f = path.open(mode, encoding="utf-8", newline="")
+    writer = csv.DictWriter(f, fieldnames=header, extrasaction="ignore")
+
+    if exists:
+        # Verify/consume existing header and count already written rows to enable resume.
+        # We can't easily reuse the same file handle for reading and writing,
+        # so do a quick separate read to count rows.
+        with path.open("r", encoding="utf-8", newline="") as rf:
+            r = csv.reader(rf)
+            try:
+                existing_header = next(r)
+            except StopIteration:
+                existing_header = []
+            # Normalize for BOM/whitespace
+            existing_header = [(h or "").strip().lstrip("\ufeff") for h in existing_header]
+            norm_header = [(h or "").strip().lstrip("\ufeff") for h in header]
+        if existing_header != norm_header:
+            f.close()
+            raise SystemExit(f"[ERROR] Output CSV exists with a different header. "
+                             f"Expected {norm_header}, found {existing_header}")
+        # Count existing data rows (exclude header)
+        with path.open("r", encoding="utf-8", newline="") as rf2:
+            rows_written = sum(1 for _ in rf2) - 1
+    else:
+        writer.writeheader()
+    return writer, rows_written
 
 
 def main():
@@ -468,6 +553,9 @@ def main():
         sys.exit(1)
 
     header, rows = load_csv_rows(input_csv)
+
+    # Create/append output CSV and possibly resume from prior progress.
+    out_writer, already_written = _prepare_output_writer(output_csv, header)
 
     # Ensure required columns exist
     required_cols = {"English_Term", "English_Sentence"}
@@ -513,6 +601,9 @@ def main():
     skipped = 0
 
     for i, row in enumerate(rows, 0):
+        # If resuming, skip rows already written to the output file
+        if i < already_written:
+            continue
         if i < args.start_index:
             continue
         if args.max_rows is not None and (i - args.start_index) >= args.max_rows:
@@ -560,20 +651,37 @@ def main():
                 cache[key] = sentence  # cache the API hit too
                 print(f"[TATOEBA] {term!r} → {sentence[:100]}{'...' if len(sentence)>100 else ''}")
 
+        # We will write the row for this index immediately after deciding whether to update.
         if sentence:
             action = "OVERWRITE" if already and args.overwrite == "yes" else "OK"
             row["English_Sentence"] = sentence
             updated += 1
             print(f"[{action}] {term!r} → {sentence[:100]}{'...' if len(sentence)>100 else ''}")
         else:
-            print(f"[MISS] {term!r} (no acceptable sentence found locally or via Tatoeba)")
+            if args.tatoeba_fallback:
+                print(f"[MISS] {term!r} (no acceptable sentence found locally or via Tatoeba)")
+            else:
+                print(f"[MISS] {term!r} (no acceptable sentence found locally)")
+
+        # Always write the current row (updated or original) immediately to the output CSV.
+        safe_row = {h: row.get(h, "") for h in header}
+        out_writer.writerow(safe_row)
 
     if args.dry_run:
         print(f"\n[DRY RUN] Would update {updated} rows; skipped {skipped}.")
         return
 
-    # Preserve original column order
-    write_csv_rows(output_csv, header, rows)
+    # Stream out any remaining rows that were not iterated (shouldn't happen, but safe)
+    # (No-op by design: we wrote each row as we processed it.)
+
+    # Close the underlying file handle of the writer if present
+    try:
+        out_file = out_writer.writer.writerows.__self__  # type: ignore[attr-defined]
+    except Exception:
+        out_file = None
+    if hasattr(out_file, "close"):
+        out_file.close()
+
     print(f"\n[DONE] Updated {updated} rows; skipped {skipped}.")
     print(f"[OUT] {output_csv}")
 

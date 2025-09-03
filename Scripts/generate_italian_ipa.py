@@ -76,6 +76,8 @@ def main():
     ap.add_argument("--backup", action="store_true", help="Write a .bak file next to the input before overwriting.")
     ap.add_argument("--dry-run", action="store_true", help="Do not write anything; just print what would change.")
     ap.add_argument("--batch-size", type=int, default=128, help="How many rows to send to G2P at once.")
+    ap.add_argument("--italian-col", required=True, help="Name of the Italian text column to phonemize.")
+    ap.add_argument("--ipa-col", required=True, help="Name of the IPA output column to write/fill. If it doesn't exist, it will be created.")
     ap.add_argument("--debug", action="store_true", help="Print diagnostics about column names and empties.")
     args = ap.parse_args()
 
@@ -84,23 +86,15 @@ def main():
     # Normalize column names (trim stray spaces, weird unicode spaces)
     df.columns = [str(c).strip() for c in df.columns]
 
-    # --- Schema detection: support legacy and new headers ---
-    legacy_cols = {"it": "Italian", "ipa": "IPA"}
-    new_cols    = {"it": "Italian_Translation", "ipa": "Italian_IPA"}
+    IT_COL = args.italian_col.strip()
+    IPA_COL = args.ipa_col.strip()
 
-    if new_cols["it"] in df.columns and new_cols["ipa"] in df.columns:
-        IT_COL  = new_cols["it"]
-        IPA_COL = new_cols["ipa"]
-        schema  = "new"
-    elif legacy_cols["it"] in df.columns and legacy_cols["ipa"] in df.columns:
-        IT_COL  = legacy_cols["it"]
-        IPA_COL = legacy_cols["ipa"]
-        schema  = "legacy"
-    else:
-        print("ERROR: could not find expected Italian/IPA columns.\n"
-              f"Columns present: {list(df.columns)}\n"
-              "Expected either ['Italian','IPA'] or ['Italian_Translation','Italian_IPA'].", file=sys.stderr)
+    if IT_COL not in df.columns:
+        print(f"ERROR: Italian text column '{IT_COL}' not found in input. Columns present: {list(df.columns)}", file=sys.stderr)
         sys.exit(1)
+    if IPA_COL not in df.columns:
+        df[IPA_COL] = ""
+    schema = "custom"
 
     # Treat empties/NaN/placeholder strings as empty
     ipa_raw = df[IPA_COL]

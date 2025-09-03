@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """
-Taxonomy tagger for CEFR word lists using a hybrid approach:
-1) Seed-list phrase/keyword matching (high precision)
-2) WordNet-based supersense heuristics (broad coverage)
+Taxonomy tagger for CEFR word lists using **WordNet supersenses**, plus exact term overrides.
 
 Usage examples:
   python3 taxonomy_tagger.py --input "Frank's Master CEFR Word List.csv" --output tagged.csv
   python3 taxonomy_tagger.py --input words.csv --output words_tagged.csv --english-column English --overwrite yes
   python3 taxonomy_tagger.py --input words.csv --dry-run
   python3 taxonomy_tagger.py --input words.csv --overrides-file overrides.json
-  python3 taxonomy_tagger.py --input words.csv --taxonomy-table taxonomy_table.json --wiktionary-cache wiktionary_cache.json --wikidata-cache wikidata_cache.json
+  python3 taxonomy_tagger.py --input words.csv --taxonomy-table taxonomy_table.json
+  python3 taxonomy_tagger.py --input words.csv --build-wordnet-cache wordnet_cache.json
+  python3 taxonomy_tagger.py --input words.csv --wordnet-cache wordnet_cache.json --output words_tagged.csv
+  python3 taxonomy_tagger.py --input words.csv --wordnet-cache wordnet_cache.json --wordnet-only --confidence 0.6 --margin 0.2 --use-cefr-priors --output words_tagged.csv
 
 Notes:
+- This script uses NLTK WordNet lexnames (aka supersenses) mapped to your taxonomy via `taxonomy_table.json` (the `wordnet_supersenses` list in each category's `mappings`).
 - If NLTK WordNet data is missing, this script will download it on first run.
-- You can optionally provide an external JSON seeds file via --seeds-file; otherwise an embedded default is used.
 - Output column defaults to 'Taxonomy' (override with --category-column).
 """
 
@@ -60,8 +61,8 @@ def _ensure_wordnet_downloaded():
 # ------------------------
 LEGACY_TO_TAXONOMY = {
     'Greetings': 'Social',
-    'Numbers & Quantities': 'Numbers',
-    'Calendar & Time': 'Numbers',
+    'Numbers & Quantities': 'Time & Quantity',
+    'Calendar & Time': 'Time & Quantity',
     'Food': 'Food',
     'Social': 'Social',
     'Shopping': 'Shopping',
@@ -171,14 +172,18 @@ def load_taxonomy_table(path: str) -> Tuple[dict, dict, dict, dict, list]:
         raise FileNotFoundError(f"taxonomy table not found: {path}")
     with p.open('r', encoding='utf-8') as f:
         table = json.load(f)
-    priority = list(table.keys())
+    priority = []
     wn_super_map, wiktionary_map, wikidata_map = {}, {}, {}
     for cat, spec in table.items():
-        maps = (spec or {}).get('mappings', {})
+        # Only treat objects that look like category specs (have a 'mappings' key)
+        if not isinstance(spec, dict) or 'mappings' not in spec:
+            continue
+        priority.append(cat)
+        maps = spec.get('mappings', {})
         for ss in maps.get('wordnet_supersenses', []) or []:
             wn_super_map.setdefault(ss.lower(), set()).add(cat)
         for wt in maps.get('wiktionary_categories', []) or []:
-            wiktionary_map.setdefault(wt.lower(), set()).add(cat)
+            wiktionary_map.setdefault(_norm_wikt(wt), set()).add(cat)
         for qid in maps.get('wikidata_classes', []) or []:
             wikidata_map.setdefault(str(qid).lower(), set()).add(cat)
     return table, wn_super_map, wiktionary_map, wikidata_map, priority
@@ -197,12 +202,21 @@ def load_json_cache(path: Optional[str]) -> dict:
             print(f"Cache JSON error in {path}: {e}", file=sys.stderr)
             return {}
 
+# ------------------------
+# Helper: Normalize Wiktionary category labels
+# ------------------------
+def _norm_wikt(label: str) -> str:
+    s = str(label).strip().lower()
+    if s.startswith('category:'):
+        s = s[len('category:'):]
+    return s
+
 def lookup_wiktionary(term: str, cache: dict) -> List[str]:
     if not cache:
         return []
     key = normalize_text(term)
     cats = cache.get(key) or cache.get(term) or []
-    return [str(c).lower() for c in (cats if isinstance(cats, list) else [cats])]
+    return [_norm_wikt(c) for c in (cats if isinstance(cats, list) else [cats])]
 
 # ------------------------
 # Online fetchers (free sources) and cache builders
@@ -303,6 +317,16 @@ def build_wikidata_cache(terms: List[str], out_path: Path, delay: float = 0.1):
             cache[normalize_text(t)] = qids
     out_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding='utf-8')
 
+def build_wordnet_cache(terms: List[str], out_path: Path):
+    _ensure_wordnet_downloaded()
+    lemmatizer = WordNetLemmatizer()
+    cache = {}
+    for t in tqdm(sorted(set(terms))):
+        key = normalize_text(t)
+        lex = sorted(list(wn_lexnames_raw(t, lemmatizer)))
+        votes = wn_lexname_votes(t, lemmatizer)
+        cache[key] = {'lexnames': lex, 'votes': dict(votes)}
+    out_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding='utf-8')
 
 def lookup_wikidata(term: str, cache: dict) -> List[str]:
     if not cache:
@@ -319,8 +343,8 @@ LEXNAME_TO_CATEGORY = {
     'noun.food': 'Food',
     'noun.person': None,          # handled with kinship overrides first, else often Social/Work
     'noun.body': 'Medical & Health',
-    'noun.time': 'Calendar & Time',
-    'noun.quantity': 'Numbers & Quantities',
+    'noun.time': 'Time & Quantity',
+    'noun.quantity': 'Time & Quantity',
     'noun.feeling': 'Feelings & Emotions',
     'noun.event': 'Events & Activities',
     'noun.act': 'Events & Activities',
@@ -355,7 +379,7 @@ KINSHIP_HINTS = set([
 # Additional lightweight heuristics to reduce unknowns
 TITLES = {"sir","maam","ma'am","madam","mrs","mr","ms","miss","maestro","doctor","dr","prof","professor","captain","chief"}
 RELIGION_HINTS = {"buddha","buddhist","monk","nun","temple","church","priest","imam","rabbi"}
-ROOM_OBJECT_HINTS = {"bathroom","bedroom","kitchen","desk","classroom","downstairs","upstairs","apartment"}
+ROOM_OBJECT_HINTS = {"apartment","house","home","bathroom","bedroom","kitchen","living room","dining room","hallway","garage","room","window","door","floor","ceiling","wall","roof","downstairs","upstairs","balcony"}
 RELATIONSHIP_HINTS = {"boyfriend","girlfriend","partner","customer","cop","classmate","neighbor"}
 
 _SUFFIX_CATEGORY_RULES = [
@@ -382,9 +406,9 @@ def classify_with_rules(term: str) -> Optional[str]:
     if t in RELATIONSHIP_HINTS:
         return "Social"
 
-    # Common rooms/household/learning locations -> Work & School (classroom/desk) or Events & Activities
+    # Common rooms/household/learning locations -> Home (except classroom/desk -> Professional)
     if t in ROOM_OBJECT_HINTS:
-        return "Work & School" if t in {"classroom","desk"} else "Events & Activities"
+        return "Professional" if t in {"classroom","desk"} else "Home"
 
     # Suffix-based fallbacks
     for rx, cat in _SUFFIX_CATEGORY_RULES:
@@ -442,10 +466,13 @@ def classify_with_seeds(term: str, seed_patterns) -> Optional[str]:
     return None
 
 
-def wn_lexname_votes(term: str, lemmatizer: WordNetLemmatizer) -> Counter:
+def wn_lexname_votes(term: str, lemmatizer: WordNetLemmatizer, cache: Optional[dict] = None) -> Counter:
+    if cache:
+        entry = cache.get(normalize_text(term)) or cache.get(term)
+        if isinstance(entry, dict) and isinstance(entry.get('votes'), dict):
+            return Counter({k: int(v) for k, v in entry['votes'].items()})
     votes = Counter()
     txt = normalize_text(term)
-    # Try multiple POS; lemmatize per POS
     pos_tags = [('n','n'), ('v','v'), ('a','a'), ('r','r')]
     for _, pos in pos_tags:
         lemma = lemmatizer.lemmatize(txt, pos=pos)
@@ -454,52 +481,32 @@ def wn_lexname_votes(term: str, lemmatizer: WordNetLemmatizer) -> Counter:
             lex = s.lexname()
             mapped = LEXNAME_TO_CATEGORY.get(lex)
             if mapped:
-                votes[mapped] += 3  # strong signal
-            # Disambiguation for artifact/person
+                votes[mapped] += 3
             gloss = (s.definition() or '').lower()
             examples = ' '.join(s.examples()).lower() if s.examples() else ''
             hypernyms = ' '.join([h.name().split('.')[0] for h in s.hypernyms()]).lower()
             text_blob = ' '.join([gloss, examples, hypernyms])
 
-            # Shopping hints for noun.artifact or commerce language
             if lex in ('noun.artifact', 'noun.possession', 'noun.communication'):
                 if any(k in text_blob for k in SHOPPING_HINTS):
                     votes['Shopping'] += 2
-
-            # Person terms towards Social
             if lex in ('noun.person','verb.social'):
                 if any(k in (lemma, txt, text_blob) for k in KINSHIP_HINTS):
                     votes['Social'] += 3
-
-            # Travel hints: vehicles/transport/places
             if any(k in text_blob for k in ['vehicle','car','bus','train','plane','airport','station','ticket','passport','luggage','journey','travel','trip','hotel']):
                 votes['Travel'] += 2
-
-            # Food hints: dish/ingredient/eat/drink
             if any(k in text_blob for k in ['food','drink','beverage','ingredient','dish','meal','eat','drink','restaurant','menu']):
                 votes['Food'] += 2
-
-            # Medical hints
             if any(k in text_blob for k in ['disease','illness','medicine','medical','doctor','pain','fever','injury','symptom','hospital','clinic','pharmacy','vaccine']):
                 votes['Medical & Health'] += 2
-
-            # Feelings
             if any(k in text_blob for k in ['emotion','feeling','mood','happy','sad','angry','fear','anxiety','joy']):
                 votes['Feelings & Emotions'] += 1
-
-            # Calendar & Time keywords
             if any(k in text_blob for k in ['time','day','month','year','season','hour','minute','second','calendar']):
-                votes['Calendar & Time'] += 1
-
-            # Numbers & Quantities
+                votes['Time & Quantity'] += 1
             if any(k in text_blob for k in ['number','quantity','amount','measure','percent','ratio']):
-                votes['Numbers & Quantities'] += 1
-
-            # Events & Activities
+                votes['Time & Quantity'] += 1
             if any(k in text_blob for k in ['event','activity','festival','party','sport','game','competition','ceremony']):
                 votes['Events & Activities'] += 1
-
-            # Opinions & Communication
             if any(k in text_blob for k in ['say','tell','speak','discussion','argue','explain','opinion','belief','think']):
                 votes['Opinions & Communication'] += 1
     return votes
@@ -509,7 +516,13 @@ def wn_lexname_votes(term: str, lemmatizer: WordNetLemmatizer) -> Counter:
 # ------------------------
 # WordNet lexname collector and priority chooser
 # ------------------------
-def wn_lexnames_raw(term: str, lemmatizer: WordNetLemmatizer) -> Set[str]:
+def wn_lexnames_raw(term: str, lemmatizer: WordNetLemmatizer, cache: Optional[dict] = None) -> Set[str]:
+    if cache:
+        entry = cache.get(normalize_text(term)) or cache.get(term)
+        if isinstance(entry, dict) and 'lexnames' in entry:
+            return set([str(x).lower() for x in entry['lexnames']])
+        if isinstance(entry, list):  # backward-compat
+            return set([str(x).lower() for x in entry])
     names = set()
     txt = normalize_text(term)
     for _, pos in [('n','n'),('v','v'),('a','a'),('r','r')]:
@@ -520,9 +533,24 @@ def wn_lexnames_raw(term: str, lemmatizer: WordNetLemmatizer) -> Set[str]:
 
 PRIORITY_ORDER = []  # will be filled from taxonomy_table order
 
+def priors_for_cefr(level: str) -> Counter:
+    lvl = (level or '').strip().upper()
+    # conservative, gentle nudges only
+    if lvl.startswith('A1'):
+        return Counter({'Social': 1, 'Time & Quantity': 1})
+    if lvl.startswith('A2'):
+        return Counter({'Shopping': 1, 'Travel': 1})
+    if lvl.startswith('B1'):
+        return Counter({'Activities': 1, 'Professional': 1})
+    # B2/C1/C2: no priors by default
+    return Counter()
+
 def choose_by_priority(cands: Set[str]) -> Optional[str]:
     if not cands:
         return None
+    # Global tie-break: prefer Social over Food when both are present
+    if 'Social' in cands and 'Food' in cands:
+        return 'Social'
     ranked = sorted(cands, key=lambda c: PRIORITY_ORDER.index(c) if c in PRIORITY_ORDER else 999)
     return ranked[0]
 
@@ -540,9 +568,13 @@ def resolve_category(seed_cat: Optional[str], wn_votes: Counter) -> Tuple[Option
         if len(tied) == 1:
             choice = tied[0]
         else:
-            # prefer the one earliest in priority
-            ranked = sorted(tied, key=lambda c: PRIORITY_ORDER.index(c) if c in PRIORITY_ORDER else 999)
-            choice = ranked[0]
+            # Global tie-break: prefer Social over Food when both are present
+            if 'Social' in tied and 'Food' in tied:
+                choice = 'Social'
+            else:
+                # prefer the one earliest in priority
+                ranked = sorted(tied, key=lambda c: PRIORITY_ORDER.index(c) if c in PRIORITY_ORDER else 999)
+                choice = ranked[0]
         debug['method'] = 'wordnet'
         debug['votes'] = dict(wn_votes)
         debug['chosen'] = choice
@@ -551,7 +583,7 @@ def resolve_category(seed_cat: Optional[str], wn_votes: Counter) -> Tuple[Option
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Assign taxonomy tags (subject categories) to a CEFR word list using seeds + WordNet.")
+    parser = argparse.ArgumentParser(description="Assign taxonomy tags (subject categories) to a CEFR word list using WordNet supersenses mapped via taxonomy_table.json.")
     parser.add_argument('--input', required=True, help='Input CSV path')
     parser.add_argument('--output', help='Output CSV path (default: adds _tagged before extension)')
     parser.add_argument('--english-column', default='English_Term', help='Column name containing the English term (default: English_Term)')
@@ -563,11 +595,18 @@ def main():
     parser.add_argument('--log-unknowns', default='unknowns.csv', help='CSV path to write terms with no category (default: unknowns.csv)')
     parser.add_argument('--log-conflicts', default='conflicts.csv', help='CSV path to write items with multiple strong signals (optional)')
     parser.add_argument('--taxonomy-table', default=str(Path(__file__).with_name('taxonomy_table.json')), help='Path to taxonomy_table.json used to map sources to final categories.')
-    parser.add_argument('--wiktionary-cache', help='Optional JSON cache mapping term -> [wiktionary category labels].')
-    parser.add_argument('--wikidata-cache', help='Optional JSON cache mapping term -> [Wikidata QIDs].')
-    parser.add_argument('--build-wiktionary-cache', metavar='OUT_JSON', help='Build Wiktionary category cache for terms and write to OUT_JSON.')
-    parser.add_argument('--build-wikidata-cache', metavar='OUT_JSON', help='Build Wikidata P31 (instance-of) cache for terms and write to OUT_JSON.')
+    parser.add_argument('--wiktionary-cache', help='(ignored in WordNet mode) Optional JSON cache mapping term -> [wiktionary category labels].')
+    parser.add_argument('--wordnet-only', action='store_true', help='Force tagger to use only WordNet (ignores Wiktionary/Wikidata).')
+    parser.add_argument('--wikidata-cache', help='(ignored in WordNet mode) Optional JSON cache mapping term -> [Wikidata QIDs].')
+    parser.add_argument('--build-wiktionary-cache', metavar='OUT_JSON', help='(deprecated) Build Wiktionary category cache (not used in WordNet mode).')
+    parser.add_argument('--build-wikidata-cache', metavar='OUT_JSON', help='(deprecated) Build Wikidata P31 cache (not used in WordNet mode).')
+    parser.add_argument('--wordnet-cache', help='Optional JSON cache mapping term -> precomputed WordNet data (lexnames and/or votes).')
+    parser.add_argument('--build-wordnet-cache', metavar='OUT_JSON', help='Build a WordNet cache (term -> {lexnames, votes}) from the input CSV and exit.')
     parser.add_argument('--rate-limit', type=float, default=0.1, help='Delay seconds between API calls when building caches (default: 0.1).')
+    parser.add_argument('--confidence', type=float, default=0.60, help='Minimum confidence threshold to auto-accept winner (default: 0.60).')
+    parser.add_argument('--margin', type=float, default=0.20, help='Minimum margin threshold to auto-accept winner (default: 0.20).')
+    parser.add_argument('--use-cefr-priors', action='store_true', help='Add small priors based on CEFR level to stabilize ambiguous terms.')
+    parser.add_argument('--cefr-column', default='CEFR_Level', help='Column name with CEFR level when --use-cefr-priors is set (default: CEFR_Level).')
 
     args = parser.parse_args()
 
@@ -577,8 +616,7 @@ def main():
         sys.exit(1)
 
     # If cache-building is requested, build and exit early
-    if args.build_wiktionary_cache or args.build_wikidata_cache:
-        # Gather terms from the input CSV using the selected english column
+    if args.build_wiktionary_cache or args.build_wikidata_cache or args.build_wordnet_cache:
         terms = []
         with in_path.open('r', encoding='utf-8', newline='') as f:
             sample = f.read(65536); f.seek(0)
@@ -602,13 +640,15 @@ def main():
             out_json = Path(args.build_wikidata_cache)
             build_wikidata_cache(terms, out_json, delay=args.rate_limit)
             print(f"Wikidata cache written to: {out_json}")
+        if args.build_wordnet_cache:
+            out_json = Path(args.build_wordnet_cache)
+            build_wordnet_cache(terms, out_json)
+            print(f"WordNet cache written to: {out_json}")
         return
 
     out_path = Path(args.output) if args.output else in_path.with_name(in_path.stem + '_tagged' + in_path.suffix)
 
-    # Load seeds & compile patterns
-    seeds = load_seeds(args.seeds_file)
-    seed_patterns = compile_seed_patterns(seeds)
+    # (Seeds and patterns are not used in Wiktionary-only mode)
 
     # Load overrides if specified
     overrides = {}
@@ -621,18 +661,46 @@ def main():
         except json.JSONDecodeError as e:
             print(f"Overrides file JSON error: {e}", file=sys.stderr)
 
-    # Load taxonomy and external caches
+    # Load taxonomy (Wiktionary/Wikidata caches are ignored when --wordnet-only is passed)
     taxonomy_table, wn_super_map, wiktionary_map, wikidata_map, taxonomy_priority = load_taxonomy_table(args.taxonomy_table)
     taxonomy_keys = set(taxonomy_priority)
     global PRIORITY_ORDER
     PRIORITY_ORDER = taxonomy_priority[:]
 
-    wiktionary_cache = load_json_cache(args.wiktionary_cache)
-    wikidata_cache = load_json_cache(args.wikidata_cache)
-
-    # WordNet setup
+    # Ensure WordNet data is available and prep lemmatizer
     _ensure_wordnet_downloaded()
     lemmatizer = WordNetLemmatizer()
+    wordnet_cache = load_json_cache(args.wordnet_cache)
+
+    # Wiktionary/Wikidata caches are ignored when --wordnet-only is passed
+    if args.wordnet_only:
+        wiktionary_cache, wikidata_cache = {}, {}
+    else:
+        wiktionary_cache = load_json_cache(args.wiktionary_cache)
+        wikidata_cache = load_json_cache(args.wikidata_cache)
+
+    # Merge in taxonomy-level term overrides (from taxonomy_table.json -> term_overrides)
+    taxonomy_overrides_raw = taxonomy_table.get('term_overrides', {}) or {}
+    taxonomy_overrides: Dict[str, str] = {}
+    for k, v in taxonomy_overrides_raw.items():
+        key_norm = normalize_text(str(k))
+        val = str(v).strip()
+        if val in taxonomy_keys:  # only accept valid categories defined in the table
+            taxonomy_overrides[key_norm] = val
+        else:
+            # ignore invalid categories quietly
+            pass
+
+    # Normalize keys for CLI overrides (if provided) and merge (CLI overrides take precedence)
+    if overrides:
+        overrides = {normalize_text(str(k)): str(v).strip() for k, v in overrides.items()}
+    else:
+        overrides = {}
+
+    # Final override map used by the classifier
+    overrides = {**taxonomy_overrides, **overrides}
+
+    # (WordNet setup not used in Wiktionary-only mode)
 
     # IO setup
     unknowns = []
@@ -680,78 +748,96 @@ def main():
             rows_out.append(row)
             continue
 
+        # Reset per-row diagnostics to avoid leaking from previous iterations
+        conflict_flag = False
+
         # Exact-match override takes absolute precedence
         if term and overrides:
-            ov_cat = overrides.get(normalize_text(term)) or overrides.get(term)
+            ov_cat = overrides.get(normalize_text(term))
         else:
             ov_cat = None
 
         if ov_cat:
             choice, debug = ov_cat, {'method': 'override'}
         else:
-            # 1) Seeds / handcrafted rules (legacy) -> finalize into new taxonomy
-            seed_cat = classify_with_seeds(term, seed_patterns)
-            rule_cat = classify_with_rules(term)
-            pref = seed_cat or rule_cat
-            choice = finalize_category(pref, taxonomy_keys)
-            debug = {'method': 'seed/rule', 'raw': pref} if choice else {}
+            # WordNet-based decision pipeline
+            # 1) Collect WordNet lexnames (supersenses) for the term
+            names = wn_lexnames_raw(term, lemmatizer, wordnet_cache)
 
-            # 2) Wiktionary cache -> taxonomy via table mappings
-            if not choice and wiktionary_cache:
-                wt_cats = lookup_wiktionary(term, wiktionary_cache)
-                mapped = set()
-                for wt in wt_cats:
-                    for cat in wiktionary_map.get(wt, []):
-                        mapped.add(cat)
-                choice = choose_by_priority(mapped)
-                if choice:
-                    debug = {'method': 'wiktionary', 'source': wt_cats}
+            # 2) Map lexnames to taxonomy categories via taxonomy_table.json
+            mapped = set()
+            for name in names:
+                for cat in wn_super_map.get(name, []) or []:
+                    mapped.add(cat)
 
-            # 3) Wikidata cache (QIDs) -> taxonomy via table mappings
-            if not choice and wikidata_cache:
-                qids = lookup_wikidata(term, wikidata_cache)
-                mapped = set()
-                for q in qids:
-                    for cat in wikidata_map.get(q, []):
-                        mapped.add(cat)
-                choice = choose_by_priority(mapped)
-                if choice:
-                    debug = {'method': 'wikidata', 'source': qids}
+            # 3) Choose by taxonomy priority when multiple candidates are present
+            choice = choose_by_priority(mapped)
+            if choice:
+                debug = {'method': 'wordnet_supersense', 'lexnames': sorted(list(names))}
 
-            # 4) WordNet supersenses (raw lexnames) -> taxonomy via table mappings
+            # 4) If still unresolved, fall back to heuristic WordNet voting
             if not choice:
-                names = wn_lexnames_raw(term, lemmatizer)
-                mapped = set()
-                for nm in names:
-                    for cat in wn_super_map.get(nm, []):
-                        mapped.add(cat)
-                choice = choose_by_priority(mapped)
-                if choice:
-                    debug = {'method': 'wordnet_supersense', 'lexnames': list(names)}
+                wn_votes = wn_lexname_votes(term, lemmatizer, wordnet_cache)
 
-            # 5) Fallback: legacy WordNet vote heuristic -> finalize to new taxonomy
-            if not choice:
-                wn_votes = wn_lexname_votes(term, lemmatizer)
-                conflict_flag = False
-                if wn_votes:
-                    top_two = wn_votes.most_common(2)
-                    if len(top_two) == 2 and top_two[1][1] >= max(1, top_two[0][1] - 1):
+                votes = wn_votes.copy()
+                # Optional CEFR priors to stabilize common beginner domains
+                if args.use_cefr_priors:
+                    cefr_val = (row.get(args.cefr_column) or '').strip()
+                    pri = priors_for_cefr(cefr_val)
+                    for k, v in pri.items():
+                        votes[k] += v
+
+                # Decide winner and compute confidence/margin
+                if votes:
+                    total_votes = sum(votes.values()) or 1
+                    top2 = votes.most_common(2)
+                    winner, wv = top2[0]
+                    runner_up_v = top2[1][1] if len(top2) > 1 else 0
+                    confidence = wv / total_votes
+                    margin = (wv - runner_up_v) / total_votes
+
+                    # Use existing tie-break preferences on exact ties
+                    if len([c for c, v in votes.items() if v == wv]) > 1:
+                        # apply your priority tie-break (and Social>Food rule)
+                        tb_choice, _ = resolve_category(None, votes)
+                        winner = tb_choice or winner
+
+                    # Accept winner if thresholds met; otherwise log as conflict (but still output winner)
+                    if confidence >= args.confidence and margin >= args.margin:
+                        choice = winner
+                        debug = {'method': 'wordnet_votes', 'confidence': round(confidence, 4), 'margin': round(margin, 4), 'votes': dict(votes)}
+                    else:
+                        choice = winner
+                        debug = {'method': 'wordnet_votes_lowmargin', 'confidence': round(confidence, 4), 'margin': round(margin, 4), 'votes': dict(votes)}
                         conflict_flag = True
-                raw_choice, _dbg = resolve_category(None, wn_votes)
-                choice = finalize_category(raw_choice, taxonomy_keys)
-                if choice:
-                    debug = {'method': 'wordnet_legacy', 'votes': dict(wn_votes)}
+                else:
+                    choice, debug = resolve_category(None, votes)
+
+            # Mark conflicts if multiple categories were possible and no override was used
+            if not ov_cat and len(mapped) > 1:
+                conflict_flag = True
 
         # If conflict flag, log
-        if not ov_cat:
-            if 'conflict_flag' in locals() and conflict_flag:
-                conflicts.append({
-                    'term': term,
-                    'votes': json.dumps(dict(wn_votes)),
-                    'chosen': choice or ''
-                })
-        else:
-            conflict_flag = False
+        if not ov_cat and conflict_flag:
+            # Try to include diagnostic stats if present
+            conf = None
+            marg = None
+            if isinstance(debug, dict):
+                conf = debug.get('confidence')
+                marg = debug.get('margin')
+            conflicts.append({
+                'term': term,
+                'votes': json.dumps({'wordnet_lexnames': sorted(list(names)), 'mapped_categories': sorted(list(mapped)), 'vote_detail': debug.get('votes') if isinstance(debug, dict) else {} }),
+                'chosen': choice or '',
+                'confidence': conf if conf is not None else '',
+                'margin': marg if marg is not None else ''
+            })
+
+        # Map legacy-style labels (e.g., 'Medical & Health') to final taxonomy keys
+        if choice:
+            normalized_choice = finalize_category(choice, taxonomy_keys)
+            if normalized_choice:
+                choice = normalized_choice
 
         if choice:
             row[args.category_column] = choice
@@ -784,7 +870,7 @@ def main():
             print(f"Unknowns logged to: {args.log_unknowns}")
         if conflicts:
             with open(args.log_conflicts, 'w', encoding='utf-8', newline='') as cf:
-                cw = csv.DictWriter(cf, fieldnames=['term','votes','chosen'])
+                cw = csv.DictWriter(cf, fieldnames=['term','votes','chosen','confidence','margin'])
                 cw.writeheader()
                 cw.writerows(conflicts)
             print(f"Conflicts logged to: {args.log_conflicts}")

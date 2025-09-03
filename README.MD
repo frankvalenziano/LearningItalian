@@ -32,12 +32,13 @@ This project aims to provide a structured plan and requirements for progressing 
 ## Data Sources
 - [Project Gutenberg](https://www.gutenberg.org/): Public Domain books from Gutenberg were the primary source for the English sentences.
 - [Tatoeba](https://tatoeba.org/en): The secondary for English sentences
-- [Wiktionary](https://dumps.wikimedia.org/itwiktionary/latest/): Italian lexical data.
-- [Kaikki](https://kaikki.org/): Comprehensive linguistic datasets.
-- [Opus Corpus](https://opus.nlpl.eu/): Parallel corpora for translation.
-- [Sutta Central](https://suttacentral.net/): Buddhist scriptures.
-- [Wikipedia](https://www.wikipedia.org/): General knowledge and reference.
-- [ChatGPT 5](https://chat.openai.com) ChatGPT used to generate 325 English sentences when scraping failed.
+- [Wiktionary](https://dumps.wikimedia.org/itwiktionary/latest/): Used for categories in the Taxonomy and the dictionary.
+- [WikiData](https://www.wikidata.org/w/api.php): Used for categories in the Taxonomy.
+- [Kaikki](https://kaikki.org/): Comprehensive linguistic datasets used for the dictionary.
+- [Opus Corpus](https://opus.nlpl.eu/): Parallel corpora for translation and the dictionary.
+- [Sutta Central](https://suttacentral.net/): Buddhist speeches used for sentence generation.
+- [Wikipedia](https://www.wikipedia.org/): General knowledge and reference, used for bulk images and descriptions.
+- [ChatGPT 5](https://chat.openai.com) ChatGPT used to generate 325 English sentences when scraping failed, and images.
 
 ---
 

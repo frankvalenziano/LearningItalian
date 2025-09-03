@@ -24,12 +24,13 @@ import re
 import sys
 import zipfile
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover
     requests = None
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple, Dict
+from typing import Iterable, List, Optional, Tuple, Dict, Set
 
 # ---------------------------
 # Sentence utilities
@@ -42,6 +43,7 @@ _SENT_SPLIT_RE = re.compile(
 TAG_RE = re.compile(r"<[^>]+>")
 WS_RE = re.compile(r"\s+")
 QUOTE_RE = re.compile(r"[\"“”‘’]")
+_WORD_RE = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?(?:-[A-Za-z]+(?:'[A-Za-z]+)?)*$")
 
 # Common abbreviations that often end with a period and should NOT end a sentence
 _ABBREV_TOKENS = {
@@ -67,6 +69,14 @@ is are was were be been being have has had do does did can could will would shal
 go goes went gone make makes made say says said see sees saw seen know knows knew known think thinks thought
 come comes came come take takes took taken give gives gave given tell tells told ask asks asked want wants wanted
 """.split())
+STOPWORDS = FUNC_WORDS  # alias for readability
+def _extract_and_split_one(fp: Path) -> Tuple[Path, List[str]]:
+    text = extract_text_from_file(fp)
+    if not text:
+        return (fp, [])
+    sents = split_sentences(text)
+    return (fp, sents)
+
 
 def _alpha_ratio(s: str) -> float:
     letters = sum(ch.isalpha() for ch in s)
@@ -91,10 +101,14 @@ def _looks_wordy(s: str) -> bool:
     caps_tokens = sum(1 for t in tokens if len(t) > 2 and t.isupper())
     if caps_tokens >= 2:
         return False
-    # Reject if abbreviation density is high (e.g., "Aug.", "Vol.", "No.")
-    abbr = re.findall(r"\b[A-Za-z]{1,3}\.\b", s)
-    if len(abbr) >= 2:
-        return False
+    # Reject if abbreviation density is high (e.g., "Aug.", "Vol.", "No.") but allow common titles
+    abbr = re.findall(r"\b[A-Za-z]{1,3}\.(?=\s|$)", s)
+    if abbr:
+        ALLOW_ABBR = {"mr.", "mrs.", "ms.", "dr.", "st.", "jr.", "sr."}
+        core = [a.lower() for a in abbr if a.lower() not in ALLOW_ABBR]
+        # Reject if there are many non-title abbreviations, or too many abbreviations overall
+        if len(core) >= 2 or len(abbr) >= 3:
+            return False
     return True
 
 def _has_function_words_and_verb(s: str) -> bool:
@@ -204,13 +218,42 @@ def seems_complete_sentence(s: str, min_words: int, max_words: int) -> bool:
 
 def build_match_regex(term: str) -> re.Pattern:
     """
-    Create a regex that prefers exact word matches, but also tolerates
-    simple morphological tails like 's, s, es.
+    Build a regex for `term` that:
+      - treats hyphenated / spaced compounds equivalently (hyphen, en/em dash, space) and also matches the tight form (no separator),
+      - matches plural / possessive tails (s, es, 's),
+      - accepts an optional trailing period for abbreviations (e.g., "Mr.").
+    Examples:
+      "check-in"    -> matches "check-in", "check in"
+      "film-maker"  -> matches "film-maker", "film maker", "filmmaker"
+      "night-life"  -> matches "night-life", "night life", "nightlife"
+      "anti-aircraft" -> matches "anti-aircraft", "anti aircraft", "antiaircraft"
+      "out-of-date" -> matches "out of date", "out-of-date"
     """
-    # Handle simple punctuation inside the term (e.g., "it's")
-    escaped = re.escape(term)
-    # Prefer exact, but allow "'s", "s", or "es" (common simple forms)
-    pattern = rf"\b{escaped}\b|\b{escaped}(?:'s|s|es)\b"
+    base = (term or "").strip().rstrip(".")  # allow optional trailing dot in text
+    if not base:
+        return re.compile(r"^$")  # match nothing
+
+    # Split on hyphens, various dashes, underscores, or whitespace
+    parts = re.split(r"[\-–—_\s]+", base)
+
+    # Joiner that accepts hyphen, en/em dash, or space
+    joiner = r"[\-–—\s]"
+    core_loose = joiner.join(map(re.escape, parts))
+
+    # Tight compound (no separator) to catch forms like "filmmaker", "antiaircraft", "nightlife"
+    tight = "".join(map(re.escape, parts))
+
+    # Plural/possessive tails
+    tails = r"(?:'s|s|es)?"
+
+    if len(parts) > 1:
+        # Word boundaries around the whole thing; support either loose or tight compound
+        pattern = rf"(?:\b{core_loose}{tails}\b|\b{tight}{tails}\b)"
+    else:
+        # Simple token: exact with optional trailing dot, plus plural/possessive tails
+        token = re.escape(parts[0])
+        pattern = rf"\b{token}\.?(?:\b|$)|\b{token}(?:'s|s|es)\b"
+
     return re.compile(pattern, re.IGNORECASE)
 
 
@@ -219,59 +262,84 @@ def build_match_regex(term: str) -> re.Pattern:
 # ---------------------------
 
 def fetch_tatoeba_sentence(term: str, *, lang_from: str = "eng", min_words: int = 6, max_words: int = 28,
-                            user_agent: str, timeout: float = 10.0) -> Optional[str]:
-    """Query Tatoeba for an English sentence containing `term`. A caller-provided User-Agent is required. Returns a single sentence or None.
-    Uses the v0 search endpoint. We filter client-side to ensure quality similar to local criteria.
+                            user_agent: str, timeout: float = 10.0, pages: int = 5, limit: int = 50) -> Optional[str]:
+    """Query Tatoeba for an English sentence containing `term`.
+    - Paginates through multiple result pages (`pages`, default 5)
+    - Scans **all sentences** within each hit (not just first sentence)
+    - Returns the shortest acceptable sentence matching the term, or None.
     """
     if requests is None:
         print("[TATOEBA] 'requests' not available; pip install requests to enable API fallback.", file=sys.stderr)
         return None
 
-    # Tatoeba API v0 search endpoint
     url = "https://tatoeba.org/en/api_v0/search"
-    headers = {"User-Agent": user_agent}
-    params = {
-        "query": term,
-        "from": lang_from,   # source language
-        "orphans": "no",
-        "unapproved": "no",
-        "has_audio": "no",
-        "sort": "random",
-        "trans_filter": "limit" ,
-        "trans_to": "",      # don't filter by translation language
-        "limit": 50,
-        "page": 1,
-    }
-    try:
-        resp = requests.get(url, params=params, headers=headers, timeout=timeout)
-        if resp.status_code != 200:
-            print(f"[TATOEBA] HTTP {resp.status_code}: {resp.text[:200]}", file=sys.stderr)
-            return None
-        data = resp.json()
-    except Exception as e:  # pragma: no cover
-        print(f"[TATOEBA] Request error: {e}", file=sys.stderr)
-        return None
+    headers = {"User-Agent": user_agent, "Accept": "application/json"}
 
-    # Expected shape: {"results": [{"text": "...", ...}, ...]}
-    results = data.get("results") or data.get("sentences") or []
-    if not isinstance(results, list):
-        return None
-
+    # Precompile the match regex once
     term_re = build_match_regex(term)
+
     best: Optional[str] = None
     best_len = 10**9
-    for item in results:
-        txt = item.get("text") if isinstance(item, dict) else None
-        if not txt:
-            continue
-        s = first_sentence(strip_outer_quotes(normalize_ws(txt)))
-        if not term_re.search(s):
-            continue
-        if not seems_complete_sentence(s, min_words=min_words, max_words=max_words):
-            continue
-        n = len(s.split())
-        if n < best_len:
-            best, best_len = s, n
+
+    for page in range(1, max(1, pages) + 1):
+        params = {
+            "query": term,
+            "from": lang_from,       # source language (e.g., 'eng')
+            "orphans": "no",
+            "unapproved": "no",
+            "has_audio": "no",
+            "sort": "relevance",
+            "trans_filter": "limit",
+            "trans_to": "",
+            "limit": int(limit),
+            "page": int(page),
+            "format": "json",
+        }
+        try:
+            resp = requests.get(url, params=params, headers=headers, timeout=timeout)
+            ctype = resp.headers.get("Content-Type", "")
+            if resp.status_code != 200:
+                # If it's an HTML error page, just log and continue to next page/term
+                preview = resp.text[:200].replace("\n", " ")
+                print(f"[TATOEBA] HTTP {resp.status_code} (page {page}) ctype={ctype} : {preview}", file=sys.stderr)
+                continue
+            if "json" not in ctype.lower():
+                preview = resp.text[:200].replace("\n", " ")
+                print(f"[TATOEBA] Non-JSON response (page {page}) ctype={ctype} : {preview}", file=sys.stderr)
+                continue
+            try:
+                data = resp.json()
+            except Exception as e:
+                preview = resp.text[:200].replace("\n", " ")
+                print(f"[TATOEBA] JSON decode error (page {page}): {e} | {preview}", file=sys.stderr)
+                continue
+        except Exception as e:  # pragma: no cover
+            print(f"[TATOEBA] Request error (page {page}): {e}", file=sys.stderr)
+            break
+
+        # The API sometimes uses different keys for the list
+        results = data.get("results") or data.get("sentences") or []
+        if not isinstance(results, list) or not results:
+            # No more content
+            break
+
+        for item in results:
+            txt = item.get("text") if isinstance(item, dict) else None
+            if not txt:
+                continue
+            # Normalize and split into sentences, then evaluate each
+            for s in split_sentences(strip_outer_quotes(normalize_ws(txt))):
+                if not term_re.search(s):
+                    continue
+                if not seems_complete_sentence(s, min_words=min_words, max_words=max_words):
+                    continue
+                n = len(s.split())
+                if n < best_len:
+                    best, best_len = s, n
+        # If we've already found a quite short sentence (e.g., <= min_words + 1), we can stop early
+        if best is not None and best_len <= max(min_words + 1, 4):
+            break
+
     return best
 
 
@@ -355,7 +423,8 @@ def search_sources_for_term(
     min_words: int,
     max_words: int,
     prefer_shorter: bool = True,
-    inverted: Optional[Dict[str, List[Tuple[Path, int]]]] = None,
+    inverted: Optional[Dict[str, List[Tuple[int, int]]]] = None,
+    files_list: Optional[List[Path]] = None,
 ) -> Optional[str]:
     """
     Search using an inverted index when available to avoid scanning all sentences.
@@ -364,7 +433,7 @@ def search_sources_for_term(
     term_re = build_match_regex(term)
     best: Optional[str] = None
     best_len: int = 10**9
-    candidates: List[Tuple[Path, int]] = []
+    candidates: List[Tuple[int, int]] = []
 
     if inverted is not None:
         seen: set = set()
@@ -374,15 +443,15 @@ def search_sources_for_term(
                     seen.add(ref)
                     candidates.append(ref)
 
-    if candidates:
-        # Iterate only candidate sentences
-        for fp, si in candidates:
-            s = file_sentences.get(fp, [])
-            if si >= len(s):
+    if candidates and files_list is not None:
+        # Iterate only candidate sentences (already split and pre-filtered)
+        for fid, si in candidates:
+            fp = files_list[fid]
+            s_list = file_sentences.get(fp, [])
+            if si >= len(s_list):
                 continue
-            s2 = strip_outer_quotes(s[si])
-            s2 = first_sentence(s2)
-            if term_re.search(s2) and seems_complete_sentence(s2, min_words, max_words):
+            s2 = strip_outer_quotes(s_list[si])  # already a single sentence
+            if term_re.search(s2):
                 if prefer_shorter:
                     n = len(s2.split())
                     if n < best_len:
@@ -391,13 +460,12 @@ def search_sources_for_term(
                     return s2
         return best
 
-    # Fallback: rare word or OOV — scan all sentences
+    # Fallback: rare word or OOV — scan all sentences (already split)
     for fp, sentences in file_sentences.items():
         if not sentences:
             continue
         for s in sentences:
             s2 = strip_outer_quotes(s)
-            s2 = first_sentence(s2)
             if term_re.search(s2) and seems_complete_sentence(s2, min_words, max_words):
                 if prefer_shorter:
                     n = len(s2.split())
@@ -533,6 +601,10 @@ def main():
                     help="Seconds to sleep between Tatoeba API calls (polite rate limit).")
     ap.add_argument("--user-agent",
                     help="User-Agent header for API requests. If omitted, uses the TATOEBA_USER_AGENT env var. Required when --tatoeba-fallback is set.")
+    ap.add_argument("--workers", type=int, default=min(6, (os.cpu_count() or 4)),
+                    help="Parallel workers for file decoding/splitting (default: up to 6).")
+    ap.add_argument("--index-only-terms", action="store_true",
+                    help="Only index tokens that match CSV terms (plus simple variants); reduces memory and speeds lookups.")
     args = ap.parse_args()
 
     # Resolve user-agent (CLI overrides env). Required if API fallback is enabled.
@@ -554,6 +626,26 @@ def main():
 
     header, rows = load_csv_rows(input_csv)
 
+    # Optional whitelist of tokens to index (dramatically smaller/faster)
+    term_whitelist: Optional[Set[str]] = None
+    if args.index_only_terms:
+        terms: List[str] = []
+        for row in rows:
+            t = (row.get("English_Term") or "").strip()
+            if t:
+                terms.append(t.lower())
+        wl: Set[str] = set()
+        for t in terms:
+            base = t.rstrip('.')
+            wl.add(base)
+            wl.add(f"{base}'s")
+            wl.add(f"{base}s")
+            wl.add(f"{base}es")
+            # also keep the dotted form so we can match literal terms if present
+            if t.endswith('.'):
+                wl.add(t)
+        term_whitelist = wl
+
     # Create/append output CSV and possibly resume from prior progress.
     out_writer, already_written = _prepare_output_writer(output_csv, header)
 
@@ -572,27 +664,40 @@ def main():
     print(f"[INIT] Preloading {len(files)} files…")
     file_sentences: Dict[Path, List[str]] = {}
     total_sentences = 0
-    for fp in files:
-        text = extract_text_from_file(fp)
-        if not text:
-            file_sentences[fp] = []
-            continue
-        sents = split_sentences(text)
-        file_sentences[fp] = sents
-        total_sentences += len(sents)
-    print(f"[INIT] Ready. {total_sentences} sentences indexed across {len(files)} files.")
+    workers = max(1, int(args.workers))
+    with ProcessPoolExecutor(max_workers=workers) as ex:
+        futs = [ex.submit(_extract_and_split_one, fp) for fp in files]
+        for fut in as_completed(futs):
+            fp, sents = fut.result()
+            file_sentences[fp] = sents
+            total_sentences += len(sents)
+    print(f"[INIT] Ready. {total_sentences} sentences indexed across {len(files)} files (workers={workers}).")
 
-    # Build a lightweight inverted index: token (lowercased) -> list of (Path, sentence_index)
+    # Build a lightweight inverted index: token (lowercased) -> list of (fid, sentence_index)
+    files_list: List[Path] = list(files)
+    file_id_of: Dict[Path, int] = {fp: i for i, fp in enumerate(files_list)}
     print("[INIT] Building inverted index…")
     from collections import defaultdict
-    inverted: Dict[str, List[Tuple[Path, int]]] = defaultdict(list)
+    inverted: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
+    min_w, max_w = args.min_words, args.max_words
     for fp, sents in file_sentences.items():
+        fid = file_id_of[fp]
         for si, s in enumerate(sents):
-            # use unique tokens per sentence to keep postings lists smaller
-            toks = set(t.lower() for t in _tokenize_simple(s) if re.match(r"[A-Za-z']+$", t))
-            for t in toks:
-                inverted[t].append((fp, si))
-    print(f"[INIT] Indexed {len(inverted)} unique tokens.")
+            # pre-filter to acceptable sentences to speed up lookups later
+            if not seems_complete_sentence(s, min_words=min_w, max_words=max_w):
+                continue
+            # unique tokens per sentence, letters/apostrophes only
+            toks = {t.lower() for t in _tokenize_simple(s) if _WORD_RE.fullmatch(t)}
+            if term_whitelist is not None:
+                hits = toks & term_whitelist
+                if not hits:
+                    continue
+                for t in hits:
+                    inverted[t].append((fid, si))
+            else:
+                for t in toks:
+                    inverted[t].append((fid, si))
+    print(f"[INIT] Indexed {len(inverted)} unique tokens (postings pre-filtered).")
 
     # Cache to avoid repeated searches for the same term
     cache: Dict[str, Optional[str]] = {}
@@ -633,6 +738,7 @@ def main():
                 max_words=args.max_words,
                 prefer_shorter=args.prefer_shorter,
                 inverted=inverted,
+                files_list=files_list,
             )
             cache[key] = sentence
 

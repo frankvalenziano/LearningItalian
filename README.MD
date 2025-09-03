@@ -22,34 +22,33 @@ This project aims to provide a structured plan and requirements for progressing 
 ---
 
 ## Tools used
-- **English vocabulary and sentences:** Compiled from various data sources and translated to Italian using the [DeepL API](https://www.deepl.com/).
-- **Audio files:** Created using [ChatGPT](https://chatgpt.com/) 5 and the Anki addon "Generate Audio" (1056834290) utilizing the Mac OSX 'say' command.
+- **Translations:** [DeepL API](https://www.deepl.com/) The free DeepL API was used for all translation tasks.
+- **Audio files:**  Anki addon "Generate Audio" (1056834290) utilizing the Mac OSX 'say' command.
 - **IPA pronunciations:** Generated programmatically with the Mac OSX 'espeak-ng' utility (part of Homebrew).
 - **Images:** Created using ChatGPT 5 and the Anki addon "Get images from Wikipedia" (586353507), including custom styles for unmatched notes.
 
 ---
 
 ## Data Sources
-- [Tatoeba](https://tatoeba.org/en): English sentences
+- [Project Gutenberg](https://www.gutenberg.org/): Public Domain books from Gutenberg were the primary source for the English sentences.
+- [Tatoeba](https://tatoeba.org/en): The secondary for English sentences
 - [Wiktionary](https://dumps.wikimedia.org/itwiktionary/latest/): Italian lexical data.
 - [Kaikki](https://kaikki.org/): Comprehensive linguistic datasets.
 - [Opus Corpus](https://opus.nlpl.eu/): Parallel corpora for translation.
-- [Project Gutenberg](https://www.gutenberg.org/): Public domain literary texts.
 - [Sutta Central](https://suttacentral.net/): Buddhist scriptures.
 - [Wikipedia](https://www.wikipedia.org/): General knowledge and reference.
+- [ChatGPT 5](https://chat.openai.com) ChatGPT used to generate 325 English sentences when scraping failed.
 
 ---
 
 ## What Are the CEFR Scales?
 
-| Level | Description                                                                                           |
-|-------|---------------------------------------------------------------------------------------------------|
-| **A1 (Beginner)**         | Can understand and use familiar everyday expressions and very basic phrases.            |
-| **A2 (Elementary)**       | Can communicate in simple and routine tasks requiring a direct exchange of information.  |
-| **B1 (Intermediate)**     | Can deal with most situations likely to arise while traveling, and produce simple connected text. |
-| **B2 (Upper Intermediate)** | Can interact with fluency and spontaneity, and produce clear, detailed text.           |
-| **C1 (Advanced)**         | Can use language flexibly and effectively for social, academic, and professional purposes. |
-| **C2 (Mastery)**          | Can understand virtually everything heard or read, and express themselves spontaneously, very fluently, and precisely. |
+- **A1 (Beginner):** Can understand and use familiar everyday expressions and very basic phrases.
+- **A2 (Elementary):** Can communicate in simple and routine tasks requiring a direct exchange of information.
+- **B1 (Intermediate):** Can deal with most situations likely to arise while traveling, and produce simple connected text.
+- **B2 (Upper Intermediate):** Can interact with fluency and spontaneity, and produce clear, detailed text.
+- **C1 (Advanced):** Can use language flexibly and effectively for social, academic, and professional purposes.
+- **C2 (Mastery):** Can understand virtually everything heard or read, and express themselves spontaneously, very fluently, and precisely.
 
 ---
 

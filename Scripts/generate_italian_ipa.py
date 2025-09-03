@@ -2,7 +2,7 @@
 # Fill missing Italian IPA in a CSV using eSpeak NG via phonemizer.
 #
 # - Keeps existing IPA values as-is.
-# - Only fills empty cells in the "IPA" column using the "Italian" column.
+# - Only fills empty cells in the IPA column (either 'IPA' or 'Italian_IPA') using the Italian text column (either 'Italian' or 'Italian_Translation').
 # - Wraps the generated IPA with slashes, to match your sheet (e.g., /aˈmo.re/).
 # - Works entirely offline once dependencies are installed.
 #
@@ -16,7 +16,9 @@
 #   python fill_italian_ipa.py --input "/path/to/file.csv" --dry-run --debug
 #
 # Notes:
-# - This script assumes your CSV header has exactly: English, Italian, IPA, Tags, Notes
+# - This script supports two schemas:
+#     Legacy: English, Italian, IPA, Tags, Notes
+#     New:    English_Term, Italian_Translation, English_Sentence, Italian_Sentence_Translation, Italian_IPA, CEFR_Level, Notes, Tags
 # - If your file is huge, you can speed up by increasing batch size.
 
 import argparse
@@ -82,15 +84,27 @@ def main():
     # Normalize column names (trim stray spaces, weird unicode spaces)
     df.columns = [str(c).strip() for c in df.columns]
 
-    expected_cols = ["English", "Italian", "IPA", "Tags", "Notes"]
-    for col in expected_cols:
-        if col not in df.columns:
-            print(f"ERROR: expected column '{col}' not found. Columns present: {list(df.columns)}", file=sys.stderr)
-            sys.exit(1)
+    # --- Schema detection: support legacy and new headers ---
+    legacy_cols = {"it": "Italian", "ipa": "IPA"}
+    new_cols    = {"it": "Italian_Translation", "ipa": "Italian_IPA"}
+
+    if new_cols["it"] in df.columns and new_cols["ipa"] in df.columns:
+        IT_COL  = new_cols["it"]
+        IPA_COL = new_cols["ipa"]
+        schema  = "new"
+    elif legacy_cols["it"] in df.columns and legacy_cols["ipa"] in df.columns:
+        IT_COL  = legacy_cols["it"]
+        IPA_COL = legacy_cols["ipa"]
+        schema  = "legacy"
+    else:
+        print("ERROR: could not find expected Italian/IPA columns.\n"
+              f"Columns present: {list(df.columns)}\n"
+              "Expected either ['Italian','IPA'] or ['Italian_Translation','Italian_IPA'].", file=sys.stderr)
+        sys.exit(1)
 
     # Treat empties/NaN/placeholder strings as empty
-    ipa_raw = df["IPA"]
-    ita_raw = df["Italian"]
+    ipa_raw = df[IPA_COL]
+    ita_raw = df[IT_COL]
     ipa_col = ipa_raw.fillna("")       # fill NaN first
     ipa_col = ipa_col.astype(str).str.replace("\u00A0", " ", regex=False).str.strip()  # replace NBSP, trim
     # Consider literal strings that mean 'empty'
@@ -103,6 +117,7 @@ def main():
     todo = df[mask_missing].copy()
 
     if args.debug:
+        print(f"Using schema={schema} | IT_COL='{IT_COL}' | IPA_COL='{IPA_COL}'")
         print("Columns:", list(df.columns))
         print("Total rows:", len(df))
         print("IPA empty candidates:", int((ipa_col == '').sum()))
@@ -119,7 +134,7 @@ def main():
 
     # Process in batches
     indices: List[int] = todo.index.tolist()
-    italian_terms: List[str] = todo["Italian"].astype(str).tolist()
+    italian_terms: List[str] = todo[IT_COL].astype(str).tolist()
     ipa_results: List[Optional[str]] = [None] * len(italian_terms)
 
     for i in range(0, len(italian_terms), args.batch_size):
@@ -141,13 +156,13 @@ def main():
         if ipa is None:
             continue
         ipa_wrapped = f"/{ipa}/"
-        df.at[idx, "IPA"] = ipa_wrapped
+        df.at[idx, IPA_COL] = ipa_wrapped
         changed += 1
 
     print(f"Prepared IPA for {changed} rows.")
 
     if args.dry_run:
-        preview = df.loc[indices[:10], ["English", "Italian", "IPA"]]
+        preview = df.loc[indices[:10], [IT_COL, IPA_COL]]
         print(preview.to_string(index=False))
         print("\nDry run complete. No files were written.")
         return

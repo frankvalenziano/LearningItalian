@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-# file: deepl_fill_italian_translations.py
+# file: DeepL_Translator.py
 # Usage examples:
-#   python3 deepl_fill_italian_translations.py -i "Frank's Core CEFR Word List.csv"
-#   python3 deepl_fill_italian_translations.py -i input.csv -o output.csv
+#   python3 DeepL_Translator.py -i "Frank's Core CEFR Word List.csv"
+#   python3 DeepL_Translator.py -i input.csv -o output.csv
 #   # Non-interactive examples (optional flags):
-#   python3 deepl_fill_italian_translations.py -i input.csv --mode vocab --overwrite
-#   python3 deepl_fill_italian_translations.py -i input.csv --mode sentence
-#   python3 deepl_fill_italian_translations.py -i input.csv --mode both
+#   python3 DeepL_Translator.py -i input.csv --mode vocab --overwrite
+#   python3 DeepL_Translator.py -i input.csv --mode sentence
+#   python3 DeepL_Translator.py -i input.csv --mode both
 #
 # Columns supported (case-sensitive):
 #   Vocabulary: English_Term  -> Italian_Translation
@@ -126,18 +126,20 @@ def ensure_columns(fieldnames: List[str], needed: List[str]):
 
 
 def process_rows(rows: List[Dict[str, str]], do_vocab: bool, do_sentence: bool, *,
-                 overwrite: bool, url: str, auth_key: str) -> Dict[str, int]:
+                 overwrite: bool, url: str, auth_key: str,
+                 COL_EN_TERM: str, COL_IT_TRANS: str,
+                 COL_EN_SENT: str, COL_IT_SENT: str) -> Dict[str, int]:
     updated_vocab = updated_sent = skipped = 0
 
     for row in rows:
         # Vocab path
         if do_vocab:
-            eng = (row.get("English_Term") or "").strip()
-            cur_it = (row.get("Italian_Translation") or "").strip()
+            eng = (row.get(COL_EN_TERM) or "").strip()
+            cur_it = (row.get(COL_IT_TRANS) or "").strip()
             if eng and (overwrite or not cur_it):
                 tr = translate(eng, url=url, auth_key=auth_key)
                 if tr:
-                    row["Italian_Translation"] = tr
+                    row[COL_IT_TRANS] = tr
                     updated_vocab += 1
                     print(f"[OK] vocab: {eng} -> {tr}")
                 else:
@@ -147,12 +149,12 @@ def process_rows(rows: List[Dict[str, str]], do_vocab: bool, do_sentence: bool, 
 
         # Sentence path
         if do_sentence:
-            en_sent = (row.get("English_Sentence") or "").strip()
-            cur_it_sent = (row.get("Italian_Sentence_Translation") or "").strip()
+            en_sent = (row.get(COL_EN_SENT) or "").strip()
+            cur_it_sent = (row.get(COL_IT_SENT) or "").strip()
             if en_sent and (overwrite or not cur_it_sent):
                 tr = translate(en_sent, url=url, auth_key=auth_key)
                 if tr:
-                    row["Italian_Sentence_Translation"] = tr
+                    row[COL_IT_SENT] = tr
                     updated_sent += 1
                     print(f"[OK] sentence: {en_sent[:60]}{'...' if len(en_sent)>60 else ''} -> {tr[:60]}{'...' if len(tr)>60 else ''}")
                 else:
@@ -208,17 +210,26 @@ def main():
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames or []
 
+        COL_EN_TERM = "English_Term"
+        COL_IT_TRANS = "Italian_Translation"
+        COL_EN_SENT = "English_Sentence"
+        COL_IT_SENT = "Italian_Sentence_Translation"
+
         needed: List[str] = []
         if do_vocab:
-            needed += ["English_Term", "Italian_Translation"]
+            needed += [COL_EN_TERM, COL_IT_TRANS]
         if do_sentence:
-            needed += ["English_Sentence", "Italian_Sentence_Translation"]
+            needed += [COL_EN_SENT, COL_IT_SENT]
         ensure_columns(fieldnames, needed)
 
         rows = list(reader)
 
+    print(f"[INFO] Using columns — vocab: {COL_EN_TERM} -> {COL_IT_TRANS}; sentences: {COL_EN_SENT} -> {COL_IT_SENT}")
+
     # Process
-    stats = process_rows(rows, do_vocab, do_sentence, overwrite=overwrite, url=args.url, auth_key=auth_key)
+    stats = process_rows(rows, do_vocab, do_sentence, overwrite=overwrite, url=args.url, auth_key=auth_key,
+                          COL_EN_TERM=COL_EN_TERM, COL_IT_TRANS=COL_IT_TRANS,
+                          COL_EN_SENT=COL_EN_SENT, COL_IT_SENT=COL_IT_SENT)
 
     # Dry run summary
     if args.dry_run:

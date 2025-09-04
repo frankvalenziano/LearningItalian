@@ -1,26 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Inputs/outputs
 INPUT="Data Sources/Dictionary.csv"
-OUTDIR="Data Sources/splits"
+OUTDIR="Data Sources"
 mkdir -p "$OUTDIR"
 
-# List distinct (CEFR_Level, Taxonomy) pairs, then make a file for each
-mlr --csv cut -f CEFR_Level,Taxonomy then uniq -a "$INPUT" | tail -n +2 | while IFS=, read -r level tax; do
-  # Drop any quotes in the pair
-  level=${level//\"/}
-  tax=${tax//\"/}
+# Get distinct CEFR levels, skip header
+mlr --csv cut -f CEFR_Level then uniq -a "$INPUT" | tail -n +2 | while IFS= read -r raw_level; do
+  # Remove any surrounding quotes and trim whitespace
+  level="${raw_level%\"}"; level="${level#\"}"
+  level="$(printf "%s" "$level" | awk '{$1=$1; print}')"
 
   # Skip blanks
-  [[ -z "$level" || -z "$tax" ]] && continue
+  [[ -z "${level}" ]] && continue
 
-  # Safe-ish filename
-  safe_level=${level//\//-}
-  safe_tax=${tax//\//-}
-  safe_tax=${safe_tax//&/and}
-  fname="$OUTDIR/${safe_level} ${safe_tax} Dictionary.csv"
+  # Make a safe filename component (keep spaces; sanitize slashes/&)
+  safe_level="${level//\//-}"
+  safe_level="${safe_level//&/and}"
 
-  # Write the subset (header included)
-  mlr --csv filter "\$CEFR_Level==\"$level\" && \$Taxonomy==\"$tax\"" "$INPUT" > "$fname"
-  echo "wrote: $fname"
+  out_file="${OUTDIR}/${safe_level} Dictionary.csv"
+
+  # Write rows matching this level (header included)
+  mlr --csv filter '$CEFR_Level == "'"$level"'"' "$INPUT" > "$out_file"
+
+  echo "wrote: $out_file"
 done

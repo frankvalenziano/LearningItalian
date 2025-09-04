@@ -10,7 +10,7 @@ if [[ $# -ne 2 ]]; then
   exit 1
 fi
 
-csv_file=$1
+csv_file="/Users/frank/Documents/Tech/Code/LearningItalian/Data Sources/Dictionary.csv"
 word=$2
 
 # Ensure dependencies
@@ -28,7 +28,7 @@ if ! csvcut -n "$csv_file" | awk -F: '$2 ~ /English_Translation/ {found=1} END{e
 fi
 
 # Use csvgrep exact match (-m) on the specific column, then see if any data rows matched
-matches=$(csvgrep -c English_Translation -m "$word" "$csv_file" | tail -n +2 | wc -l | tr -d ' ')
+matches=$(csvgrep -c English_Translation -r "(?i)^${word}\$" "$csv_file" | tail -n +2 | wc -l | tr -d ' ')
 if (( matches > 0 )); then
   echo yes
 else

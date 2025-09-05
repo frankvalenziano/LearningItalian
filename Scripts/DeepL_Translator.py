@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # file: DeepL_Translator.py
 # Usage examples:
-#   python3 DeepL_Translator.py -i "Frank's Core CEFR Word List.csv"
+#   python3 DeepL_Translator.py -i "Dictionary.csv"
 #   python3 DeepL_Translator.py -i input.csv -o output.csv
 #   # Non-interactive examples (optional flags):
 #   python3 DeepL_Translator.py -i input.csv --mode vocab --overwrite
@@ -9,8 +9,8 @@
 #   python3 DeepL_Translator.py -i input.csv --mode both
 #
 # Columns supported (case-sensitive):
-#   Vocabulary: English_Term  -> Italian_Translation
-#   Sentences:  English_Sentence -> Italian_Sentence_Translation
+#   Vocabulary: English_Translation  -> Italian_Term
+#   Sentences:  English_Sentence -> Italian_Sentence
 #
 # Notes:
 # - Talks to DeepL API (free or paid). Does NOT store the API key in the script; it
@@ -89,8 +89,8 @@ def translate(text: str, url: str, auth_key: str, source_lang: str = "EN", targe
 def prompt_mode() -> str:
     """Prompt the user for translation mode: vocab, sentence, both."""
     print("\nWhat would you like to translate?")
-    print("  1) English → Italian Vocabulary (English_Term → Italian_Translation)")
-    print("  2) English → Italian Sentence   (English_Sentence → Italian_Sentence_Translation)")
+    print("  1) English → Italian Vocabulary (English_Translation → Italian_Term)")
+    print("  2) English → Italian Sentence   (English_Sentence → Italian_Sentence)")
     print("  3) Both")
     while True:
         choice = input("Choose 1, 2, or 3: ").strip()
@@ -210,10 +210,10 @@ def main():
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames or []
 
-        COL_EN_TERM = "English_Term"
-        COL_IT_TRANS = "Italian_Translation"
+        COL_EN_TERM = "English_Translation"
+        COL_IT_TRANS = "Italian_Term"
         COL_EN_SENT = "English_Sentence"
-        COL_IT_SENT = "Italian_Sentence_Translation"
+        COL_IT_SENT = "Italian_Sentence"
 
         needed: List[str] = []
         if do_vocab:

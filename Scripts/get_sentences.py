@@ -3,15 +3,15 @@
 get_sentences_from_local_sources.py
 
 Scan local text sources (TXT and EPUB) to find a natural English sentence
-containing each English_Term (case-insensitive) from a CSV and write it into
+containing each English_Translation (case-insensitive) from a CSV and write it into
 the English_Sentence column. Basic quality filters ensure sentences are
 complete and not too short/long.
 
 Usage example:
   python3 get_sentences_from_local_sources.py \
       --sources-dir "/path/to/English Sources" \
-      --input-csv   "Frank's Core CEFR Word List - Sentences.csv" \
-      --output-csv  "Frank's Core CEFR Word List - Sentences.filled.csv" \
+      --input-csv   "Dictionary.csv" \
+      --output-csv  "Dictionary.Sentences.csv" \
       --min-words 6 \
       --max-words 22
 """
@@ -543,47 +543,48 @@ def write_csv_rows(path: Path, header: List[str], rows: List[Dict[str, str]]) ->
 # ---------------------------
 # Streaming/append-safe output helper
 # ---------------------------
-def _prepare_output_writer(path: Path, header: List[str]) -> Tuple[csv.DictWriter, int]:
+def _prepare_output_writer(path: Path, header: List[str], *, resume: bool) -> Tuple[csv.DictWriter, int, object]:
     """
-    Open `path` for streaming writes. If the file already exists with the same header,
-    resume by appending new rows and return (writer, rows_already_written).
-    If it doesn't exist (or is empty), create it and write the header.
+    Open `path` for streaming writes.
+    - Default (resume=False): rewrite the file from scratch (mode='w') so the output always mirrors the input.
+    - Resume mode (resume=True): if file exists with identical header, append (mode='a') and return count of existing data rows.
     """
     rows_written = 0
-    exists = path.exists() and path.stat().st_size > 0
-    mode = "a" if exists else "w"
+    if resume:
+        exists = path.exists() and path.stat().st_size > 0
+        mode = "a" if exists else "w"
+    else:
+        # Force rebuild by default
+        exists = False
+        mode = "w"
     f = path.open(mode, encoding="utf-8", newline="")
     writer = csv.DictWriter(f, fieldnames=header, extrasaction="ignore")
 
-    if exists:
-        # Verify/consume existing header and count already written rows to enable resume.
-        # We can't easily reuse the same file handle for reading and writing,
-        # so do a quick separate read to count rows.
+    if resume and mode == "a":
+        # Verify header matches and count existing rows
         with path.open("r", encoding="utf-8", newline="") as rf:
             r = csv.reader(rf)
             try:
                 existing_header = next(r)
             except StopIteration:
                 existing_header = []
-            # Normalize for BOM/whitespace
             existing_header = [(h or "").strip().lstrip("\ufeff") for h in existing_header]
             norm_header = [(h or "").strip().lstrip("\ufeff") for h in header]
         if existing_header != norm_header:
             f.close()
             raise SystemExit(f"[ERROR] Output CSV exists with a different header. "
                              f"Expected {norm_header}, found {existing_header}")
-        # Count existing data rows (exclude header)
         with path.open("r", encoding="utf-8", newline="") as rf2:
             rows_written = sum(1 for _ in rf2) - 1
     else:
         writer.writeheader()
-    return writer, rows_written
+    return writer, rows_written, f
 
 
 def main():
     ap = argparse.ArgumentParser(description="Fill English_Sentence from local sources.")
     ap.add_argument("--sources-dir", required=True, help="Directory containing .txt/.epub sources (searched recursively).")
-    ap.add_argument("--input-csv", required=True, help="Input CSV with columns including English_Term and English_Sentence.")
+    ap.add_argument("--input-csv", required=True, help="Input CSV with columns including English_Translation and English_Sentence.")
     ap.add_argument("--output-csv", required=True, help="Where to write the updated CSV.")
     ap.add_argument("--min-words", type=int, default=6, help="Minimum words per sentence.")
     ap.add_argument("--max-words", type=int, default=28, help="Maximum words per sentence.")
@@ -605,7 +606,12 @@ def main():
                     help="Parallel workers for file decoding/splitting (default: up to 6).")
     ap.add_argument("--index-only-terms", action="store_true",
                     help="Only index tokens that match CSV terms (plus simple variants); reduces memory and speeds lookups.")
+    ap.add_argument("--resume", action="store_true",
+                    help="Append to an existing output CSV (resume mode). By default, the script rewrites the output from scratch to ensure it mirrors the entire input.")
     args = ap.parse_args()
+
+    # Banner: print mode
+    print(f"[MODE] {'RESUME (append)' if args.resume else 'REBUILD (overwrite)'}")
 
     # Resolve user-agent (CLI overrides env). Required if API fallback is enabled.
     effective_user_agent = args.user_agent or os.environ.get("TATOEBA_USER_AGENT")
@@ -631,7 +637,7 @@ def main():
     if args.index_only_terms:
         terms: List[str] = []
         for row in rows:
-            t = (row.get("English_Term") or "").strip()
+            t = (row.get("English_Translation") or "").strip()
             if t:
                 terms.append(t.lower())
         wl: Set[str] = set()
@@ -647,14 +653,16 @@ def main():
         term_whitelist = wl
 
     # Create/append output CSV and possibly resume from prior progress.
-    out_writer, already_written = _prepare_output_writer(output_csv, header)
+    out_writer, already_written, out_handle = _prepare_output_writer(output_csv, header, resume=bool(args.resume))
 
     # Ensure required columns exist
-    required_cols = {"English_Term", "English_Sentence"}
+    required_cols = {"English_Translation", "English_Sentence"}
     missing = required_cols - set(h or "" for h in header)
     if missing:
         print(f"[ERROR] Missing required columns in CSV: {missing}", file=sys.stderr)
         sys.exit(1)
+
+    # (Prefill block removed; handled by resume logic)
 
     files = list(iter_source_files(sources_dir))
     if not files:
@@ -705,22 +713,29 @@ def main():
     updated = 0
     skipped = 0
 
+    last_processed_index = -1
+
     for i, row in enumerate(rows, 0):
-        # If resuming, skip rows already written to the output file
-        if i < already_written:
-            continue
+        # Skip rows that precede --start-index
         if i < args.start_index:
+            continue
+        # In resume mode, also skip rows already present in the existing output
+        if args.resume and i < already_written:
             continue
         if args.max_rows is not None and (i - args.start_index) >= args.max_rows:
             break
 
-        term = (row.get("English_Term") or "").strip()
+        term = (row.get("English_Translation") or "").strip()
         if not term:
             skipped += 1
             continue
 
         already = (row.get("English_Sentence") or "").strip()
         if already and args.overwrite == "no":
+            # Pass through unchanged so output mirrors input
+            safe_row = {h: row.get(h, "") for h in header}
+            out_writer.writerow(safe_row)
+            last_processed_index = i
             skipped += 1
             continue
 
@@ -772,21 +787,26 @@ def main():
         # Always write the current row (updated or original) immediately to the output CSV.
         safe_row = {h: row.get(h, "") for h in header}
         out_writer.writerow(safe_row)
+        last_processed_index = i
+
+    # Write any remaining rows (not processed due to --max-rows or early break)
+    # so that the output file mirrors the entire original CSV.
+    # Skip rows that are already present in the existing output (<= already_written - 1).
+    remaining_start = max(already_written if args.resume else 0, last_processed_index + 1)
+    if remaining_start < len(rows):
+        for j in range(remaining_start, len(rows)):
+            safe_row = {h: rows[j].get(h, "") for h in header}
+            out_writer.writerow(safe_row)
 
     if args.dry_run:
         print(f"\n[DRY RUN] Would update {updated} rows; skipped {skipped}.")
         return
 
-    # Stream out any remaining rows that were not iterated (shouldn't happen, but safe)
-    # (No-op by design: we wrote each row as we processed it.)
-
-    # Close the underlying file handle of the writer if present
+    # Close the output file handle cleanly
     try:
-        out_file = out_writer.writer.writerows.__self__  # type: ignore[attr-defined]
+        out_handle.close()
     except Exception:
-        out_file = None
-    if hasattr(out_file, "close"):
-        out_file.close()
+        pass
 
     print(f"\n[DONE] Updated {updated} rows; skipped {skipped}.")
     print(f"[OUT] {output_csv}")

@@ -1,4 +1,3 @@
-
 #!/usr/bin/env zsh
 set -euo pipefail
 
@@ -13,7 +12,7 @@ cd "$script_dir"
 
 # Paths
 tagger_py="/Users/frank/Documents/Tech/Code/LearningItalian/Scripts/taxonomy_tagger.py"
-input_csv="/Users/frank/Documents/Tech/Code/LearningItalian/Data Sources/Frank's Core CEFR English-Italian Dictionary.csv"
+input_csv="/Users/frank/Documents/Tech/Code/LearningItalian/Data Sources/Dictionary.csv"
 cache_path="$script_dir/wordnet_cache.json"
 
 # Helpful logging
@@ -78,5 +77,4 @@ python3 "$tagger_py" \
   --input "$input_csv" \
   --english-column English_Term \
   --wordnet-cache "$cache_path" \
-  --rate-limit 0.1 \
   "$@"

@@ -10,11 +10,14 @@
         "noun.person",
         "noun.communication",
         "noun.relation"
-      ],
-      "wiktionary_categories": [
-        "en:Greetings", "en:Family", "en:Friendship", "en:Animals", "en:Kinship", "en:Relatives", "en:Titles", "en:Forms of address", "en:Interjections", "en:Honorifics"
-      ],
-      "wikidata_classes": ["Q43693", "Q164965", "Q35120"]
+      ]
+    }
+  },
+    "Time & Quantity": {
+    "description": "Numbers, counting, calendars, dates, times, temporal reference frames, money",
+    "examples": ["one", "Monday", "clock", "euro", "past", "future"],
+    "mappings": {
+      "wordnet_supersenses": ["noun.quantity", "noun.time"]
     }
   },
   "Food": {
@@ -25,20 +28,37 @@
         "noun.food",
         "verb.consumption",
         "verb.creation"
-      ],
-      "wiktionary_categories": ["en:Food and drink", "en:Fruits", "en:Vegetables"],
-      "wikidata_classes": ["Q2095", "Q746549"]
+      ]
     }
   },
-  "Time & Quantity": {
-    "description": "Numbers, counting, calendars, dates, times, temporal reference frames, money",
-    "examples": ["one", "Monday", "clock", "euro", "past", "future"],
+    "Shopping": {
+    "description": "Clothes, technology, non-food shopping, household goods, services",
+    "examples": ["shirt", "shoes", "computer", "to buy"],
     "mappings": {
-      "wordnet_supersenses": ["noun.quantity", "noun.time"],
-      "wiktionary_categories": [
-        "en:Numbers", "en:Days of the week", "en:Time", "en:Months", "en:Time of day", "en:Seasons", "en:Calendar"
-      ],
-      "wikidata_classes": ["Q11573", "Q3185571", "Q11471"]
+      "wordnet_supersenses": ["noun.artifact", "noun.possession"]
+    }
+  },
+  "Travel": {
+  "description": "Transportation, geography, directions, tourism",
+  "examples": ["train", "bus", "city", "to travel", "map"],
+  "mappings": {
+    "wordnet_supersenses": [
+      "noun.artifact",
+      "noun.location",
+      "verb.motion"
+    ]
+  }
+},
+  "Professional": {
+    "description": "Jobs, workplaces, education, business, professional services",
+    "examples": ["teacher", "office", "to work", "company"],
+    "mappings": {
+      "wordnet_supersenses": [
+        "noun.person",
+        "noun.group",
+        "noun.location",
+        "verb.social"
+      ]
     }
   },
   "Grammar": {
@@ -51,38 +71,7 @@
         "adj.all",
         "adj.pert",
         "adv.all"
-      ],
-      "wiktionary_categories": [
-        "en:Grammar", "en:Pronouns", "en:Conjunctions", "en:Prepositions", "en:Determiners", "en:Question words", "en:Articles"
-      ],
-      "wikidata_classes": ["Q146786", "Q36224", "Q36229"]
-    }
-  },
-  "Shopping": {
-    "description": "Clothes, technology, non-food shopping, household goods, services",
-    "examples": ["shirt", "shoes", "computer", "to buy"],
-    "mappings": {
-      "wordnet_supersenses": ["noun.artifact", "noun.possession"],
-      "wiktionary_categories": [
-        "en:Clothing", "en:Technology", "en:Shopping", "en:Consumer goods", "en:Retail"
-      ],
-      "wikidata_classes": ["Q11460", "Q11028", "Q28640"]
-    }
-  },
-  "Professional": {
-    "description": "Jobs, workplaces, education, business, professional services",
-    "examples": ["teacher", "office", "to work", "company"],
-    "mappings": {
-      "wordnet_supersenses": [
-        "noun.person",
-        "noun.group",
-        "noun.location",
-        "verb.social"
-      ],
-      "wiktionary_categories": [
-        "en:Occupations", "en:Education", "en:Business", "en:Internet", "en:Computing"
-      ],
-      "wikidata_classes": ["Q28640", "Q3918", "Q4830453"]
+      ]
     }
   },
   "Health": {
@@ -94,11 +83,7 @@
         "noun.person",
         "noun.state",
         "verb.body"
-      ],
-      "wiktionary_categories": [
-        "en:Body parts", "en:Medicine", "en:Health", "en:Diseases", "en:Symptoms", "en:Treatments"
-      ],
-      "wikidata_classes": ["Q4936952", "Q11190", "Q12140"]
+      ]
     }
   },
   "Emotions": {
@@ -109,11 +94,7 @@
         "noun.feeling",
         "noun.state",
         "verb.emotion"
-      ],
-      "wiktionary_categories": [
-        "en:Emotions", "en:Feelings", "en:Personality"
-      ],
-      "wikidata_classes": ["Q9415", "Q18123741"]
+      ]
     }
   },
   "Abstract": {
@@ -129,31 +110,7 @@
         "adv.all",
         "noun.motive",
         "noun.phenomenon"
-      ],
-      "wiktionary_categories": [
-        "en:Concepts",
-        "en:Abstract nouns",
-        "en:Idioms",
-        "en:Prepositions",
-        "en:Adverbs",
-        "en:Adpositions"
-      ],
-      "wikidata_classes": ["Q151885", "Q7184903"]
-    }
-  },
-  "Travel": {
-    "description": "Transportation, geography, directions, tourism",
-    "examples": ["train", "bus", "city", "to travel", "map"],
-    "mappings": {
-      "wordnet_supersenses": [
-        "noun.artifact",
-        "noun.location",
-        "verb.motion"
-      ],
-      "wiktionary_categories": [
-        "en:Transport", "en:Cities", "en:Tourism", "en:Air travel", "en:Rail transport", "en:Road transport", "en:Water transport"
-      ],
-      "wikidata_classes": ["Q870", "Q515", "Q11707"]
+      ]
     }
   },
   "Home": {
@@ -166,11 +123,7 @@
         "noun.object",
         "noun.phenomenon",
         "noun.animal"
-      ],
-      "wiktionary_categories": [
-        "en:Rooms", "en:Furniture", "en:Household appliances", "en:Housing", "en:Weather", "en:Nature", "en:Bathrooms", "en:Hygiene", "en:Plumbing", "en:Sanitation", "en:Household items", "en:Architecture", "en:Building materials"
-      ],
-      "wikidata_classes": ["Q3947", "Q1021641", "Q14745"]
+      ]
     }
   },
   "Activities": {
@@ -184,11 +137,7 @@
         "verb.motion",
         "verb.creation",
         "verb.contact"
-      ],
-      "wiktionary_categories": [
-        "en:Sports", "en:Hobbies", "en:Entertainment", "en:Events", "en:Ball games", "en:Baseball", "en:Basketball", "en:Football", "en:Volleyball", "en:Music", "en:Musical instruments", "en:Concerts"
-      ],
-      "wikidata_classes": ["Q349", "Q13218630", "Q1656682"]
+      ]
     }
   }
 }

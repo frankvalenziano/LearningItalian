@@ -10,10 +10,10 @@ Usage examples:
   python3 taxonomy_tagger.py --input words.csv --taxonomy-table taxonomy_table.json
   python3 taxonomy_tagger.py --input words.csv --build-wordnet-cache wordnet_cache.json
   python3 taxonomy_tagger.py --input words.csv --wordnet-cache wordnet_cache.json --output words_tagged.csv
-  python3 taxonomy_tagger.py --input words.csv --wordnet-cache wordnet_cache.json --wordnet-only --confidence 0.6 --margin 0.2 --use-cefr-priors --output words_tagged.csv
+  python3 taxonomy_tagger.py --input words.csv --wordnet-cache wordnet_cache.json --confidence 0.6 --margin 0.2 --use-cefr-priors --output words_tagged.csv
 
 Notes:
-- This script uses NLTK WordNet lexnames (aka supersenses) mapped to your taxonomy via `taxonomy_table.json` (the `wordnet_supersenses` list in each category's `mappings`).
+- This script uses only NLTK WordNet lexnames (aka supersenses) mapped to your taxonomy via `taxonomy_table.json` (the `wordnet_supersenses` list in each category's `mappings`).
 - If NLTK WordNet data is missing, this script will download it on first run.
 - Output column defaults to 'Taxonomy' (override with --category-column).
 """
@@ -27,7 +27,6 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Optional, Tuple, Set, List, Dict, Any
 import time
-import requests
 
 # Optional but helpful
 try:
@@ -44,8 +43,6 @@ except ImportError as e:
     print("This script requires nltk. Install with: pip install nltk", file=sys.stderr)
     raise
 
-
-
 def _ensure_wordnet_downloaded():
     """Ensure required NLTK corpora are available, download if missing."""
     try:
@@ -54,7 +51,6 @@ def _ensure_wordnet_downloaded():
         nltk.download('wordnet', quiet=True)
         nltk.download('omw-1.4', quiet=True)  # multilingual glosses
         wn.ensure_loaded()
-
 
 # ------------------------
 # Legacy -> New taxonomy mapping and finalizer
@@ -82,98 +78,17 @@ def finalize_category(raw: Optional[str], taxonomy_keys: Set[str]) -> Optional[s
     mapped = mapped.strip()
     return mapped if mapped in taxonomy_keys else None
 
-
-#
-# ------------------------
-# Embedded default seed taxonomy (can be overridden by --seeds-file)
-# ------------------------
-DEFAULT_SEEDS = {
-  "Greetings": [
-    "hello","hi","hey","good morning","good afternoon","good evening","good night",
-    "how are you","nice to meet you","pleased to meet you","please","thank you",
-    "thanks","you’re welcome","you're welcome","excuse me","sorry","goodbye","bye","see you"
-  ],
-  "Numbers & Quantities": [
-    "zero","one","two","three","ten","hundred","thousand","million","first","second",
-    "third","half","quarter","dozen","pair","couple","several","many","few",
-    "more","less","most","least","enough","some","all","none","percent","per"
-  ],
-  "Calendar & Time": [
-    "today","tomorrow","yesterday","day","week","month","year","decade","century",
-    "monday","tuesday","wednesday","thursday","friday","saturday","sunday",
-    "january","february","march","april","may","june","july","august","september",
-    "october","november","december","spring","summer","autumn","fall","winter",
-    "morning","noon","afternoon","evening","night","hour","minute","second","o’clock","oclock"
-  ],
-  "Food": [
-    "apple","banana","orange","grape","strawberry","tomato","potato","onion","garlic","carrot",
-    "bread","rice","pasta","noodles","flour","sugar","salt","oil","butter","cheese",
-    "milk","yogurt","egg","fish","chicken","beef","pork","tofu","beans","lentils",
-    "water","tea","coffee","juice","wine","beer","breakfast","lunch","dinner","snack",
-    "salad","soup","pizza","sandwich","dessert","menu","bill","tip"
-  ],
-  "Social": [
-    "mother","father","parent","sister","brother","child","baby","son","daughter","family",
-    "friend","neighbor","coworker","colleague","boss","wife","husband","partner","couple","relative",
-    "woman","man","person","people","guest","host"
-  ],
-  "Shopping": [
-    "shop","store","market","mall","cart","basket","cashier","receipt","refund","discount",
-    "sale","price","cost","cheap","expensive","bargain","exchange","return","brand","size",
-    "small","medium","large","fit","try on","credit","debit","cash","euro","dollar"
-  ],
-  "Travel": [
-    "travel","trip","journey","tour","ticket","reservation","passport","visa","luggage","baggage",
-    "bag","suitcase","map","guide","direction","station","platform","stop","schedule","delay",
-    "bus","train","tram","metro","subway","taxi","car","rental","bicycle","plane","airport",
-    "hotel","hostel","check in","check out","boarding","gate"
-  ],
-  "Work & School": [
-    "job","work","career","profession","employee","employer","office","meeting","project","deadline",
-    "salary","resume","interview","promotion","computer","email","report","task","manager","team",
-    "school","class","lesson","homework","exam","test","teacher","student","university","lecture"
-  ],
-  "Medical & Health": [
-    "doctor","nurse","dentist","pharmacist","hospital","clinic","pharmacy","appointment","prescription","medicine",
-    "pill","tablet","vaccine","symptom","diagnosis","treatment","emergency","pain","fever","headache",
-    "cough","cold","flu","allergy","injury","wound","blood","heart","stomach","back"
-  ],
-  "Opinions & Communication": [
-    "yes","no","maybe","think","believe","guess","agree","disagree","prefer","recommend",
-    "suggest","argue","claim","explain","describe","discuss","ask","answer","say","tell",
-    "true","false","good","bad","better","worse","best","worst","compare","contrast"
-  ],
-  "Feelings & Emotions": [
-    "happy","sad","angry","afraid","scared","worried","nervous","anxious","excited","relieved",
-    "surprised","bored","tired","sleepy","hungry","thirsty","lonely","jealous","proud","ashamed",
-    "hopeful","grateful","frustrated","calm"
-  ],
-  "Events & Activities": [
-    "event","activity","holiday","festival","party","birthday","wedding","anniversary","picnic","celebration",
-    "meeting","conference","ceremony","concert","exhibition","game","match","sport","hobby","exercise",
-    "run","walk","swim","dance","sing","read","write","draw","cook","camp"
-  ],
-  "Idioms & Abstract": [
-    "by the way","in the long run","sooner or later","in the meantime","on the other hand",
-    "as a matter of fact","rule of thumb","break the ice","piece of cake","hit the road",
-    "under the weather","once in a while","back to square one","call it a day","out of the blue",
-    "hit the nail on the head","the ball is in your court","bark up the wrong tree","let the cat out of the bag","spill the beans",
-    "beat around the bush","cost an arm and a leg","pull someone’s leg","pull someone's leg","take it with a grain of salt","think outside the box",
-    "the tip of the iceberg","burn the midnight oil","cut to the chase","on the same page","keep an eye on"
-  ]
-}
-
 # ------------------------
 # Taxonomy table loader & reverse maps
 # ------------------------
-def load_taxonomy_table(path: str) -> Tuple[dict, dict, dict, dict, list]:
+def load_taxonomy_table(path: str) -> Tuple[dict, dict, list]:
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"taxonomy table not found: {path}")
     with p.open('r', encoding='utf-8') as f:
         table = json.load(f)
     priority = []
-    wn_super_map, wiktionary_map, wikidata_map = {}, {}, {}
+    wn_super_map = {}
     for cat, spec in table.items():
         # Only treat objects that look like category specs (have a 'mappings' key)
         if not isinstance(spec, dict) or 'mappings' not in spec:
@@ -182,11 +97,7 @@ def load_taxonomy_table(path: str) -> Tuple[dict, dict, dict, dict, list]:
         maps = spec.get('mappings', {})
         for ss in maps.get('wordnet_supersenses', []) or []:
             wn_super_map.setdefault(ss.lower(), set()).add(cat)
-        for wt in maps.get('wiktionary_categories', []) or []:
-            wiktionary_map.setdefault(_norm_wikt(wt), set()).add(cat)
-        for qid in maps.get('wikidata_classes', []) or []:
-            wikidata_map.setdefault(str(qid).lower(), set()).add(cat)
-    return table, wn_super_map, wiktionary_map, wikidata_map, priority
+    return table, wn_super_map, priority
 
 def load_json_cache(path: Optional[str]) -> dict:
     if not path:
@@ -202,138 +113,7 @@ def load_json_cache(path: Optional[str]) -> dict:
             print(f"Cache JSON error in {path}: {e}", file=sys.stderr)
             return {}
 
-# ------------------------
-# Helper: Normalize Wiktionary category labels
-# ------------------------
-def _norm_wikt(label: str) -> str:
-    s = str(label).strip().lower()
-    if s.startswith('category:'):
-        s = s[len('category:'):]
-    return s
 
-def lookup_wiktionary(term: str, cache: dict) -> List[str]:
-    if not cache:
-        return []
-    key = normalize_text(term)
-    cats = cache.get(key) or cache.get(term) or []
-    return [_norm_wikt(c) for c in (cats if isinstance(cats, list) else [cats])]
-
-# ------------------------
-# Online fetchers (free sources) and cache builders
-# ------------------------
-WIKTIONARY_API = "https://en.wiktionary.org/w/api.php"
-WIKIDATA_API = "https://www.wikidata.org/w/api.php"
-
-
-def fetch_wiktionary_categories(term: str, session: requests.Session, delay: float = 0.1) -> List[str]:
-    """Fetch category titles from en.wiktionary for a term. Returns normalized category names (lowercased)."""
-    params = {
-        'action': 'query',
-        'format': 'json',
-        'prop': 'categories',
-        'cllimit': 'max',
-        'redirects': 1,
-        'titles': term,
-    }
-    try:
-        r = session.get(WIKTIONARY_API, params=params, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        pages = data.get('query', {}).get('pages', {})
-        cats = []
-        for page in pages.values():
-            for c in page.get('categories', []) or []:
-                title = c.get('title', '')
-                # Keep only topical-style categories like 'Category:en:Food and drink' or 'Category:en:Fruits'
-                if title.lower().startswith('category:en:'):
-                    cats.append(title)
-        time.sleep(delay)
-        return [c.lower() for c in cats]
-    except Exception:
-        return []
-
-
-def fetch_wikidata_qids(term: str, session: requests.Session, delay: float = 0.1) -> List[str]:
-    """Fetch Wikidata QIDs for direct 'instance of' (P31) of the best-matching entity label in English."""
-    try:
-        # 1) search entity
-        params = {
-            'action': 'wbsearchentities',
-            'search': term,
-            'language': 'en',
-            'uselang': 'en',
-            'format': 'json',
-            'limit': 1,
-        }
-        r = session.get(WIKIDATA_API, params=params, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        if not data.get('search'):
-            return []
-        qid = data['search'][0]['id']
-
-        # 2) get claims
-        params2 = {
-            'action': 'wbgetentities',
-            'ids': qid,
-            'languages': 'en',
-            'props': 'claims',
-            'format': 'json'
-        }
-        r2 = session.get(WIKIDATA_API, params=params2, timeout=10)
-        r2.raise_for_status()
-        data2 = r2.json()
-        claims = data2.get('entities', {}).get(qid, {}).get('claims', {})
-        p31 = claims.get('P31', [])
-        qids = []
-        for snak in p31:
-            try:
-                val = snak['mainsnak']['datavalue']['value']
-                qids.append(val['id'])
-            except Exception:
-                continue
-        time.sleep(delay)
-        return [q.lower() for q in qids]
-    except Exception:
-        return []
-
-
-def build_wiktionary_cache(terms: List[str], out_path: Path, delay: float = 0.1):
-    sess = requests.Session()
-    cache = {}
-    for t in tqdm(sorted(set(terms))):
-        cats = fetch_wiktionary_categories(t, sess, delay=delay)
-        if cats:
-            cache[normalize_text(t)] = cats
-    out_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding='utf-8')
-
-
-def build_wikidata_cache(terms: List[str], out_path: Path, delay: float = 0.1):
-    sess = requests.Session()
-    cache = {}
-    for t in tqdm(sorted(set(terms))):
-        qids = fetch_wikidata_qids(t, sess, delay=delay)
-        if qids:
-            cache[normalize_text(t)] = qids
-    out_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding='utf-8')
-
-def build_wordnet_cache(terms: List[str], out_path: Path):
-    _ensure_wordnet_downloaded()
-    lemmatizer = WordNetLemmatizer()
-    cache = {}
-    for t in tqdm(sorted(set(terms))):
-        key = normalize_text(t)
-        lex = sorted(list(wn_lexnames_raw(t, lemmatizer)))
-        votes = wn_lexname_votes(t, lemmatizer)
-        cache[key] = {'lexnames': lex, 'votes': dict(votes)}
-    out_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding='utf-8')
-
-def lookup_wikidata(term: str, cache: dict) -> List[str]:
-    if not cache:
-        return []
-    key = normalize_text(term)
-    qids = cache.get(key) or cache.get(term) or []
-    return [str(q).lower() for q in (qids if isinstance(qids, list) else [qids])]
 
 # ------------------------
 # WordNet lexname -> category heuristic map
@@ -545,6 +325,30 @@ def priors_for_cefr(level: str) -> Counter:
     # B2/C1/C2: no priors by default
     return Counter()
 
+# CEFR -> taxonomy category priority lists (from most to least typical)
+CEFR_TAXONOMY_PRIORITY = {
+    'A1': ['Social', 'Time & Quantity', 'Food', 'Home', 'Shopping'],
+    'A2': ['Shopping', 'Travel', 'Home', 'Health', 'Activities'],
+    'B1': ['Activities', 'Travel', 'Professional', 'Opinions & Communication'],
+    'B2': ['Professional', 'Opinions & Communication', 'Abstract', 'Health'],
+    'C1': ['Abstract', 'Opinions & Communication', 'Professional', 'Activities'],
+    'C2': ['Abstract', 'Professional', 'Social', 'Emotions'],
+}
+
+def category_from_cefr(level: str, taxonomy_keys: Set[str]) -> Optional[str]:
+    if not level:
+        return None
+    key = level.strip().upper()
+    prefs = CEFR_TAXONOMY_PRIORITY.get(key)
+    if not prefs:
+        return None
+    # Return the first preferred category that exists in the current taxonomy table
+    for cat in prefs:
+        mapped = finalize_category(cat, taxonomy_keys)
+        if mapped and mapped in taxonomy_keys:
+            return mapped
+    return None
+
 def choose_by_priority(cands: Set[str]) -> Optional[str]:
     if not cands:
         return None
@@ -595,18 +399,17 @@ def main():
     parser.add_argument('--log-unknowns', default='unknowns.csv', help='CSV path to write terms with no category (default: unknowns.csv)')
     parser.add_argument('--log-conflicts', default='conflicts.csv', help='CSV path to write items with multiple strong signals (optional)')
     parser.add_argument('--taxonomy-table', default=str(Path(__file__).with_name('taxonomy_table.json')), help='Path to taxonomy_table.json used to map sources to final categories.')
-    parser.add_argument('--wiktionary-cache', help='(ignored in WordNet mode) Optional JSON cache mapping term -> [wiktionary category labels].')
-    parser.add_argument('--wordnet-only', action='store_true', help='Force tagger to use only WordNet (ignores Wiktionary/Wikidata).')
-    parser.add_argument('--wikidata-cache', help='(ignored in WordNet mode) Optional JSON cache mapping term -> [Wikidata QIDs].')
-    parser.add_argument('--build-wiktionary-cache', metavar='OUT_JSON', help='(deprecated) Build Wiktionary category cache (not used in WordNet mode).')
-    parser.add_argument('--build-wikidata-cache', metavar='OUT_JSON', help='(deprecated) Build Wikidata P31 cache (not used in WordNet mode).')
+    # --wiktionary-cache, --wikidata-cache, --build-wiktionary-cache, --build-wikidata-cache, --wordnet-only, --rate-limit removed
     parser.add_argument('--wordnet-cache', help='Optional JSON cache mapping term -> precomputed WordNet data (lexnames and/or votes).')
     parser.add_argument('--build-wordnet-cache', metavar='OUT_JSON', help='Build a WordNet cache (term -> {lexnames, votes}) from the input CSV and exit.')
-    parser.add_argument('--rate-limit', type=float, default=0.1, help='Delay seconds between API calls when building caches (default: 0.1).')
     parser.add_argument('--confidence', type=float, default=0.60, help='Minimum confidence threshold to auto-accept winner (default: 0.60).')
     parser.add_argument('--margin', type=float, default=0.20, help='Minimum margin threshold to auto-accept winner (default: 0.20).')
     parser.add_argument('--use-cefr-priors', action='store_true', help='Add small priors based on CEFR level to stabilize ambiguous terms.')
     parser.add_argument('--cefr-column', default='CEFR_Level', help='Column name with CEFR level when --use-cefr-priors is set (default: CEFR_Level).')
+    parser.add_argument('--set-cefr-level', help='If provided, write this CEFR level string into the CEFR column (default column name from --cefr-column).')
+    parser.add_argument('--cefr-overwrite', choices=['yes','no'], default='no', help='If using --set-cefr-level, choose whether to overwrite existing non-empty CEFR values (default: no)')
+    parser.add_argument('--map-from-cefr', choices=['yes','no'], default='no',
+                        help='If yes, set taxonomy purely from CEFR level mapping (A1..C2) rather than WordNet.')
 
     args = parser.parse_args()
 
@@ -616,7 +419,7 @@ def main():
         sys.exit(1)
 
     # If cache-building is requested, build and exit early
-    if args.build_wiktionary_cache or args.build_wikidata_cache or args.build_wordnet_cache:
+    if args.build_wordnet_cache:
         terms = []
         with in_path.open('r', encoding='utf-8', newline='') as f:
             sample = f.read(65536); f.seek(0)
@@ -632,18 +435,9 @@ def main():
                 val = (row.get(args.english_column) or '').strip()
                 if val:
                     terms.append(val)
-        if args.build_wiktionary_cache:
-            out_json = Path(args.build_wiktionary_cache)
-            build_wiktionary_cache(terms, out_json, delay=args.rate_limit)
-            print(f"Wiktionary cache written to: {out_json}")
-        if args.build_wikidata_cache:
-            out_json = Path(args.build_wikidata_cache)
-            build_wikidata_cache(terms, out_json, delay=args.rate_limit)
-            print(f"Wikidata cache written to: {out_json}")
-        if args.build_wordnet_cache:
-            out_json = Path(args.build_wordnet_cache)
-            build_wordnet_cache(terms, out_json)
-            print(f"WordNet cache written to: {out_json}")
+        out_json = Path(args.build_wordnet_cache)
+        build_wordnet_cache(terms, out_json)
+        print(f"WordNet cache written to: {out_json}")
         return
 
     out_path = Path(args.output) if args.output else in_path.with_name(in_path.stem + '_tagged' + in_path.suffix)
@@ -661,8 +455,8 @@ def main():
         except json.JSONDecodeError as e:
             print(f"Overrides file JSON error: {e}", file=sys.stderr)
 
-    # Load taxonomy (Wiktionary/Wikidata caches are ignored when --wordnet-only is passed)
-    taxonomy_table, wn_super_map, wiktionary_map, wikidata_map, taxonomy_priority = load_taxonomy_table(args.taxonomy_table)
+    # Load taxonomy
+    taxonomy_table, wn_super_map, taxonomy_priority = load_taxonomy_table(args.taxonomy_table)
     taxonomy_keys = set(taxonomy_priority)
     global PRIORITY_ORDER
     PRIORITY_ORDER = taxonomy_priority[:]
@@ -672,12 +466,7 @@ def main():
     lemmatizer = WordNetLemmatizer()
     wordnet_cache = load_json_cache(args.wordnet_cache)
 
-    # Wiktionary/Wikidata caches are ignored when --wordnet-only is passed
-    if args.wordnet_only:
-        wiktionary_cache, wikidata_cache = {}, {}
-    else:
-        wiktionary_cache = load_json_cache(args.wiktionary_cache)
-        wikidata_cache = load_json_cache(args.wikidata_cache)
+    # Only WordNet is used; Wiktionary/Wikidata caches are not needed.
 
     # Merge in taxonomy-level term overrides (from taxonomy_table.json -> term_overrides)
     taxonomy_overrides_raw = taxonomy_table.get('term_overrides', {}) or {}
@@ -722,6 +511,9 @@ def main():
 
     if args.category_column not in fieldnames:
         fieldnames.append(args.category_column)
+    # Ensure CEFR column is present in output even if missing in input
+    if args.cefr_column not in fieldnames:
+        fieldnames.append(args.cefr_column)
 
     def _row_iter():
         with in_path.open('r', encoding='utf-8', newline='') as f:
@@ -742,11 +534,28 @@ def main():
             rows_out.append(row)
             continue
 
+        # Optionally set CEFR level into the CEFR column
+        if args.set_cefr_level:
+            current_cefr = (row.get(args.cefr_column) or '').strip()
+            if args.cefr_overwrite == 'yes' or not current_cefr:
+                row[args.cefr_column] = args.set_cefr_level
+
+        # Respect taxonomy overwrite flag
         existing = (row.get(args.category_column) or '').strip()
         if existing and args.overwrite == 'no':
             skipped_existing += 1
             rows_out.append(row)
             continue
+
+        # If requested, map taxonomy directly from CEFR level and skip other methods
+        if args.map_from_cefr == 'yes':
+            cefr_val = (row.get(args.cefr_column) or '').strip()
+            cefr_choice = category_from_cefr(cefr_val, taxonomy_keys)
+            if cefr_choice:
+                row[args.category_column] = cefr_choice
+                updated += 1
+                rows_out.append(row)
+                continue
 
         # Reset per-row diagnostics to avoid leaking from previous iterations
         conflict_flag = False
@@ -816,6 +625,11 @@ def main():
             # Mark conflicts if multiple categories were possible and no override was used
             if not ov_cat and len(mapped) > 1:
                 conflict_flag = True
+
+        # Fallback: if no choice yet, try CEFR-based mapping
+        if not choice:
+            cefr_val_fb = (row.get(args.cefr_column) or '').strip()
+            choice = category_from_cefr(cefr_val_fb, taxonomy_keys)
 
         # If conflict flag, log
         if not ov_cat and conflict_flag:

@@ -7,9 +7,8 @@
 #   python3 DeepL_Translator.py -i input.csv --mode-sentence   --translate-to-english
 #   # You can enable both vocab+sentence by passing both mode flags:
 #   python3 DeepL_Translator.py -i input.csv --mode-vocabulary --mode-sentence
-#   # Legacy (deprecated) --mode still works: vocab | sentence | both
 #   # Non-interactive examples (optional flags):
-#   python3 DeepL_Translator.py -i input.csv --mode both --only-missing --translate-to-italian
+#   python3 DeepL_Translator.py -i input.csv --mode-vocabulary --only-missing --translate-to-italian --api-key $DEEPL_API_KEY
 
 import argparse
 import csv
@@ -20,31 +19,42 @@ from typing import Optional, List, Dict
 from getpass import getpass
 
 import requests
+import os, sys
+from getpass import getpass
 
+# --------------------------- Custom Exceptions --------------------------
+# Custom exceptions for specific DeepL API errors
+class QuotaExceededError(Exception):
+    """DeepL quota exhausted (HTTP 456)."""
+
+class RateLimitedError(Exception):
+    """DeepL rate limited (HTTP 429)."""
+
+    
+# Resolve API key safely for CI/local
+def resolve_auth_key(args) -> str:
+    if getattr(args, 'api_key', None):
+        return args.api_key.strip()
+    env_key = os.getenv('DEEPL_API_KEY') or os.getenv('DEEPL_AUTH_KEY')
+    if env_key:
+        return env_key.strip()
+    # In non‑TTY (e.g., GitHub Actions) do not prompt; fail clearly
+    if not sys.stdin.isatty():
+        sys.exit('DEEPL_API_KEY not found and --api-key not provided. Set it in the workflow env or pass --api-key.')
+    return getpass('Enter your DeepL API key: ').strip()
+
+
+# ------------------------- Configuration --------------------------
 # Default to the DeepL Free endpoint. You can override with --url to use the paid endpoint.
 DEFAULT_URL = "https://api-free.deepl.com/v2/translate"
-
-
-# --------------------------- API Key Handling ---------------------------
-
-def get_deepl_key_interactive() -> str:
-    """Return a DeepL API key, preferring env var DEEPL_API_KEY, else prompt securely."""
-    key = os.environ.get("DEEPL_API_KEY", "").strip()
-    if key:
-        return key
-    # Prompt without echoing to terminal
-    while True:
-        key = getpass("Enter your DeepL API key: ").strip()
-        if key:
-            return key
-        print("API key cannot be empty. Please try again.")
 
 
 # ----------------------------- Translation -----------------------------
 
 def translate(text: str, url: str, auth_key: str, source_lang: str = "EN", target_lang: str = "IT",
               timeout: float = 20.0, retries: int = 3) -> Optional[str]:
-    """Translate text via DeepL. Returns None on failure."""
+    """Translate text via DeepL. Returns None on generic failure.
+    Raises QuotaExceededError on HTTP 456 to allow graceful CI handling."""
     if not text:
         return None
 
@@ -60,20 +70,37 @@ def translate(text: str, url: str, auth_key: str, source_lang: str = "EN", targe
         try:
             r = requests.post(url, data=params, headers={"Authorization": f"DeepL-Auth-Key {auth_key}"}, timeout=timeout)
             if r.status_code in (400, 403):
-                # Fallback to form-data auth_key (rarely needed but harmless)
+                # Some accounts expect auth_key in form body; harmless retry
                 r = requests.post(url, data={**params, "auth_key": auth_key}, timeout=timeout)
+
+            if r.status_code == 456:
+                # Quota exhausted -> do not retry
+                raise QuotaExceededError("DeepL quota exhausted (HTTP 456)")
+
+            if r.status_code == 429:
+                # Rate limited -> backoff & retry
+                if attempt == retries:
+                    raise RateLimitedError("DeepL rate limited (HTTP 429)")
+                time.sleep(delay)
+                delay *= 1.7
+                continue
+
             r.raise_for_status()
             data = r.json()
             translations = data.get("translations") or []
             if translations and isinstance(translations, list):
                 return translations[0].get("text")
             return None
+        except QuotaExceededError:
+            raise
+        except RateLimitedError:
+            raise
         except Exception as e:
             if attempt == retries:
                 sys.stderr.write(f"[ERROR] Failed to translate: {e}\n")
                 return None
             time.sleep(delay)
-            delay *= 1.7  # simple backoff
+            delay *= 1.7
 
 
 # ------------------------------ Prompts --------------------------------
@@ -167,7 +194,6 @@ def main():
     ap.add_argument("-o", "--output", help="Output CSV path (default: input basename + .out.csv)")
     ap.add_argument("--url", default=DEFAULT_URL, help=f"DeepL endpoint (default: {DEFAULT_URL}; paid: https://api.deepl.com/v2/translate)")
     # Optional non-interactive flags (if omitted, prompts will be shown)
-    ap.add_argument("--mode", choices=["vocab", "sentence", "both"], help="[DEPRECATED] Use --mode-sentence and/or --mode-vocabulary instead (vocab|sentence|both).")
     ap.add_argument("--overwrite", action="store_true", help="Overwrite existing values (default: prompt)")
     ap.add_argument("--only-missing", action="store_true", help="Only update missing values (default: prompt)")
     ap.add_argument("--dry-run", action="store_true", help="Show what would change without writing file")
@@ -175,6 +201,8 @@ def main():
     ap.add_argument("--mode-vocabulary", action="store_true", help="Translate vocabulary (English_Translation ↔ Italian_Term).")
     ap.add_argument("--translate-to-english", action="store_true", help="Set target to English (source Italian).")
     ap.add_argument("--translate-to-italian", action="store_true", help="Set target to Italian (source English). Default if neither is provided.")
+    ap.add_argument("--api-key", dest="api_key", default=None, help="DeepL API key (overrides $DEEPL_API_KEY).")
+    ap.add_argument("--soft-fail-on-quota", action="store_true", help="Exit 0 if quota exhausted (HTTP 456) after writing partial progress.")
     args = ap.parse_args()
 
     in_path = args.input
@@ -196,21 +224,11 @@ def main():
         COL_SRC_TERM = "English_Translation"; COL_DST_TERM = "Italian_Term"
         COL_SRC_SENT = "English_Sentence";   COL_DST_SENT = "Italian_Sentence"
 
-    # Determine mode (new flags preferred; legacy --mode supported)
+    # Determine mode (new flags preferred)
     if args.mode_sentence or args.mode_vocabulary:
         do_sentence = args.mode_sentence
         do_vocab = args.mode_vocabulary
-    elif args.mode:
-        if args.mode == "vocab":
-            do_vocab, do_sentence = True, False
-        elif args.mode == "sentence":
-            do_vocab, do_sentence = False, True
-        elif args.mode == "both":
-            do_vocab, do_sentence = True, True
-        else:
-            sys.exit("Unknown --mode value. Use vocab|sentence|both.")
     else:
-        # Interactive prompts if nothing specified
         mode = prompt_mode()
         do_vocab = mode in ("vocab", "both")
         do_sentence = mode in ("sentence", "both")
@@ -226,7 +244,7 @@ def main():
         overwrite = prompt_overwrite()
 
     # Get API key interactively (or from env var)
-    auth_key = get_deepl_key_interactive()
+    auth_key = resolve_auth_key(args)
 
     # Read all rows
     with open(in_path, "r", encoding="utf-8-sig", newline="") as f:
@@ -244,13 +262,23 @@ def main():
     print(f"[INFO] Using columns — vocab: {COL_SRC_TERM} -> {COL_DST_TERM}; sentences: {COL_SRC_SENT} -> {COL_DST_SENT}")
 
     # Process
-    stats = process_rows(
-        rows, do_vocab, do_sentence,
-        overwrite=overwrite, url=args.url, auth_key=auth_key,
-        COL_SRC_TERM=COL_SRC_TERM, COL_DST_TERM=COL_DST_TERM,
-        COL_SRC_SENT=COL_SRC_SENT, COL_DST_SENT=COL_DST_SENT,
-        source_lang=source_lang, target_lang=target_lang,
-    )
+    try:
+        stats = process_rows(
+            rows, do_vocab, do_sentence,
+            overwrite=overwrite, url=args.url, auth_key=auth_key,
+            COL_SRC_TERM=COL_SRC_TERM, COL_DST_TERM=COL_DST_TERM,
+            COL_SRC_SENT=COL_SRC_SENT, COL_DST_SENT=COL_DST_SENT,
+            source_lang=source_lang, target_lang=target_lang,
+        )
+    except QuotaExceededError as e:
+        print(f"[FATAL] {e}. Writing partial progress and exiting.", file=sys.stderr)
+        # Write whatever was updated so far
+        with open(out_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+        soft = args.soft_fail_on_quota or os.getenv("DEEPL_SOFT_FAIL_ON_QUOTA") == "1"
+        sys.exit(0 if soft else 2)
 
     # Dry run summary
     if args.dry_run:

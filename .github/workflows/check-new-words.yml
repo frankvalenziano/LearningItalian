@@ -14,7 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}  # available to all steps
-
+      DEEPL_SOFT_FAIL_ON_QUOTA: '1'
+      
     steps:
       - uses: actions/checkout@v4
 

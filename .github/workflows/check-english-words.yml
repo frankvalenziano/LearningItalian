@@ -3,7 +3,7 @@ name: Check words and update Dictionary
 on:
   push:
     paths:
-      - "Data Sources/new_words.txt"   # Only run if new_words.txt changes
+      - "Data Sources/new_english_words.txt"   # Only run if new_english_words.txt changes
 
 jobs:
   update-dictionary:
@@ -25,10 +25,10 @@ jobs:
         run: |
           ./Scripts/checkDictionary.zsh \
             --dict "Data Sources/Dictionary.csv" \
-            --word-list "Data Sources/new_words.txt"
+            --add-english "Data Sources/new_english_words.txt"
 
       - name: Clear new_words.txt (optional)
-        run: printf "" > "Data Sources/new_words.txt"
+        run: printf "" > "Data Sources/new_english_words.txt"
 
       - name: Commit and push changes
         run: |

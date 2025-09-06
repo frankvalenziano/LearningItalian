@@ -79,17 +79,62 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+
+# --- List ingestion helpers ---
+trim_line() {
+  # usage: trim_line "str" -> echoes trimmed version
+  typeset s="$1"
+  # trim leading spaces
+  s="${s##[[:space:]]}"
+  # trim trailing spaces
+  s="${s%%[[:space:]]}"
+  print -- "$s"
+}
+
+ingest_list_file() {
+  # usage: ingest_list_file <path> <array-name-to-append>
+  typeset path="$1" aname="$2"
+  if [[ ! -f "$path" ]]; then
+    print -u2 -- "Error: word list not found: $path"
+    return 1
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    typeset w
+    w=$(trim_line "$line")
+    [[ -z "$w" || "$w" == \#* ]] && continue
+    eval "$aname+=(\"$w\")"
+  done < "$path"
+}
+
+expand_add_args_from_files() {
+  # usage: expand_add_args_from_files <array-name>
+  typeset aname="$1"
+  typeset -a original expanded
+  eval "original=(\"\${${aname}[@]:-}\")"
+  for item in "${original[@]}"; do
+    if [[ -f "$item" ]]; then
+      # treat item as a file and ingest each non-empty/non-comment line
+      while IFS= read -r line || [[ -n "$line" ]]; do
+        typeset w
+        w=$(trim_line "$line")
+        [[ -z "$w" || "$w" == \#* ]] && continue
+        expanded+=("$w")
+      done < "$item"
+    else
+      expanded+=("$item")
+    fi
+  done
+  eval "$aname=(\"\${expanded[@]}\")"
+}
+
 # Ingest word list (for checks)
 if [[ -n "$word_list" ]]; then
-  [[ -f "$word_list" ]] || { echo "Error: word list not found: $word_list" >&2; exit 1; }
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    local w="$line"
-    w="${w##[[:space:]]}"   # trim leading
-    w="${w%%[[:space:]]}"   # trim trailing
-    [[ -z "$w" || "$w" == \#* ]] && continue
-    words+=("$w")
-  done < "$word_list"
+  ingest_list_file "$word_list" words || exit 1
 fi
+
+# Allow --add-english/--add-italian to accept a filepath whose lines are terms
+expand_add_args_from_files add_en
+expand_add_args_from_files add_it
 
 # Ensure dependencies
 for bin in csvcut; do

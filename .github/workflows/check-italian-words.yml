@@ -1,4 +1,8 @@
+
 name: Check words and update Dictionary
+
+permissions:
+  contents: write
 
 on:
   push:
@@ -12,6 +16,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
 
       - name: Set up Python and install csvkit
         run: |
@@ -36,9 +43,7 @@ jobs:
         run: printf "" > "Data Sources/new_italian_words.txt"
 
       - name: Commit and push changes
-        run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "actions@users.noreply.github.com"
-          git add -A
-          git diff --cached --quiet || git commit -m "Update Dictionary.csv via GitHub Action"
-          git push
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Update Dictionary.csv via GitHub Action"
+          branch: ${{ github.ref_name }}

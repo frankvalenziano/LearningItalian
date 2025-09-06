@@ -3,5 +3,4 @@ Strano
 Modo 
 Farsi
 Dare
-Hai 
-dare
+Hai

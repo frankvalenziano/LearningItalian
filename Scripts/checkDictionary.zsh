@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env zsh
 # Check one or more words against the English_Translation column of a CSV dictionary.
 # - Case-insensitive exact match
 # - If a word is missing, append a new row placing the *lowercased* word in the

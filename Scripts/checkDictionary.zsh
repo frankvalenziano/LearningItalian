@@ -1,49 +1,197 @@
-#!/bin/zsh
-# Check or add words in Dictionary.csv
+#!/usr/bin/env zsh
+# checkDictionary.zsh — manage Dictionary.csv entries and finalize the file
 #
-# Features
-# - Check words for exact, case-insensitive match in English_Translation (existing behavior)
-# - Append new rows with a value in either English_Translation or Italian_Term via flags
-# - Proper CSV quoting is applied when adding (commas/quotes handled)
+# Features:
+#  - Check existence of words in English_Translation (case-insensitive exact match)
+#  - Append new rows to English_Translation or Italian_Term (skip if already exists)
+#  - Accept lists from files
+#  - Optional finalization step to dedupe/merge and sort deterministically
 #
-# Examples
-#   ./checkDictionary.zsh --word apple
-#   ./checkDictionary.zsh --dict "Data Sources/Dictionary.csv" --word banana --word "green tea"
-#   ./checkDictionary.zsh --word-list "Data Sources/new_words.txt"
-#   ./checkDictionary.zsh --add-english "green tea"
-#   ./checkDictionary.zsh --add-italian "tè verde"
-#   ./checkDictionary.zsh --dict "Data Sources/Dictionary.csv" --add-english "green tea" --add-italian "tè verde"
+# Usage examples:
+#   ./Scripts/checkDictionary.zsh --word apple
+#   ./Scripts/checkDictionary.zsh --dict "Data Sources/Dictionary.csv" --word banana --word "green tea"
+#   ./Scripts/checkDictionary.zsh --word-list "Data Sources/new_words.txt"
+#   ./Scripts/checkDictionary.zsh --add-english "green tea" --add-italian "tè verde"
+#   ./Scripts/checkDictionary.zsh --finalize --dict "Data Sources/Dictionary.csv"
 #
-# Requires: csvkit (csvcut)
+# Columns expected:
+#   English_Translation, Italian_Term (plus any others you maintain)
 
 set -euo pipefail
 
-# Defaults
-csv_file="/Users/frank/Documents/Tech/Code/LearningItalian/Data Sources/Dictionary.csv"
+# --- Defaults ---
+csv_file="Data Sources/Dictionary.csv"
 word_list=""
 typeset -a words add_en add_it
+finalize=false
 
 print_usage() {
   cat >&2 <<USAGE
 Usage:
-  $0 [--dict <csv_file>] [--word <word> ...]
+  $0 [--dict <csv_file>] --word <word> [--word <word> ...]
   $0 [--dict <csv_file>] --word-list <path_to_txt>
   $0 [--dict <csv_file>] --add-english <term> [--add-english <term> ...]
   $0 [--dict <csv_file>] --add-italian  <term> [--add-italian  <term> ...]
+  $0 [--dict <csv_file>] --finalize
 
 Options:
-  --dict         Path to the CSV dictionary file (default: \$csv_file)
-  --word         A word to check in English_Translation (may be repeated)
+  --dict         Path to the CSV dictionary file (default: $csv_file)
+  --word         A word to check in English_Translation (repeatable)
   --word-list    File containing one word per line to check in English_Translation
-  --add-english  Append a new CSV row with value in English_Translation
-  --add-italian  Append a new CSV row with value in Italian_Term
+  --add-english  Append value(s) to English_Translation (accepts file paths as values too)
+  --add-italian  Append value(s) to Italian_Term (accepts file paths as values too)
+  --finalize     Dedupe & sort the CSV once at the end (safe for CI)
   -h, --help     Show this help
 
 Notes:
-  * When adding, proper CSV quoting is applied. If the value already exists in
-    the target column (case-insensitive exact match), the row will not be added.
-  * When a single --word is given (no list), output is just \`yes\` or \`no\`.
+  * Matching is case-insensitive and exact (no trimming beyond whitespace).
+  * Appends create a new row with only the target column set; all other columns remain empty.
+  * Finalize removes exact-duplicate rows, merges duplicates by EN/IT keys (preferring filled counterparts), then sorts by English_Translation.
 USAGE
+}
+
+# --- Helpers ---
+trim_line() {
+  local s="$1"
+  s="${s##[[:space:]]}"
+  s="${s%%[[:space:]]}"
+  print -- "$s"
+}
+
+ingest_list_file() {
+  local path="$1" aname="$2"
+  [[ -f "$path" ]] || { print -u2 -- "Error: word list not found: $path"; return 1; }
+  local line w
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    w=$(trim_line "$line")
+    [[ -z "$w" || "$w" == \#* ]] && continue
+    eval "$aname+=(\"$w\")"
+  done < "$path"
+}
+
+expand_add_args_from_files() {
+  local aname="$1"; local -a original expanded
+  eval "original=(\"\${${aname}[@]:-}\")"
+  local item line w
+  for item in "${original[@]}"; do
+    if [[ -f "$item" ]]; then
+      while IFS= read -r line || [[ -n "$line" ]]; do
+        w=$(trim_line "$line")
+        [[ -z "$w" || "$w" == \#* ]] && continue
+        expanded+=("$w")
+      done < "$item"
+    else
+      expanded+=("$item")
+    fi
+  done
+  eval "$aname=(\"\${expanded[@]}\")"
+}
+
+# Python helpers for robust CSV ops
+py_has_value_in_col() {
+  local col="$1" val="$2" file="$3"
+  python3 - "$file" "$col" "$val" <<'PY'
+import sys, csv
+path, col, val = sys.argv[1], sys.argv[2], sys.argv[3]
+needle = (val or '').strip().lower()
+with open(path, newline='', encoding='utf-8-sig') as f:
+    r = csv.DictReader(f)
+    for row in r:
+        cell = (row.get(col) or '').strip().lower()
+        if cell == needle:
+            sys.exit(0)
+sys.exit(1)
+PY
+}
+
+py_append_in_col() {
+  local col="$1" val="$2" file="$3"
+  python3 - "$file" "$col" "$val" <<'PY'
+import sys, csv
+path, col, val = sys.argv[1], sys.argv[2], sys.argv[3]
+# Read header to preserve field order
+with open(path, newline='', encoding='utf-8-sig') as f:
+    reader = csv.DictReader(f)
+    fieldnames = list(reader.fieldnames or [])
+if not fieldnames:
+    print(f"Error: CSV has no header: {path}", file=sys.stderr)
+    sys.exit(2)
+# Build a blank row and set desired column
+row = {h: '' for h in fieldnames}
+if col not in row:
+    print(f"Error: column not found: {col}", file=sys.stderr)
+    sys.exit(3)
+row[col] = val
+# Append row
+with open(path, 'a', newline='', encoding='utf-8') as f:
+    w = csv.DictWriter(f, fieldnames=fieldnames, lineterminator='\n')
+    w.writerow(row)
+PY
+}
+
+finalize_csv() {
+  local file="$1" tmp
+  tmp=$(mktemp)
+  python3 - "$file" > "$tmp" <<'PY'
+import sys, csv
+from collections import OrderedDict
+path = sys.argv[1]
+with open(path, newline='', encoding='utf-8-sig') as f:
+    rows = list(csv.DictReader(f))
+    fieldnames = rows[0].keys() if rows else []
+# 1) remove exact duplicate rows
+seen = set(); uniq = []
+for r in rows:
+    key = '\0'.join((r.get(h,'') or '') for h in fieldnames)
+    if key in seen: continue
+    seen.add(key); uniq.append(r)
+rows = uniq
+# 2) dedupe by English_Translation (prefer rows with Italian_Term)
+by_en = OrderedDict()
+for r in rows:
+    en = (r.get('English_Translation') or '').strip().lower()
+    if not en:
+        by_en[(None, id(r))] = r; continue
+    cur = by_en.get(en)
+    if cur is None:
+        by_en[en] = r
+    else:
+        it_new = (r.get('Italian_Term') or '').strip()
+        it_old = (cur.get('Italian_Term') or '').strip()
+        if it_new and not it_old:
+            by_en[en] = r
+        else:
+            for h in fieldnames:
+                if not (cur.get(h) or '').strip() and (r.get(h) or '').strip():
+                    cur[h] = r[h]
+rows = [v for k,v in by_en.items() if not (isinstance(k, tuple) and k[0] is None)]
+rows += [v for k,v in by_en.items() if isinstance(k, tuple) and k[0] is None]
+# 3) dedupe by Italian_Term (prefer rows with English_Translation)
+by_it = OrderedDict()
+for r in rows:
+    it = (r.get('Italian_Term') or '').strip().lower()
+    key = ('IT', it) if it else (None, id(r))
+    cur = by_it.get(key)
+    if cur is None:
+        by_it[key] = r
+    else:
+        en_new = (r.get('English_Translation') or '').strip()
+        en_old = (cur.get('English_Translation') or '').strip()
+        if en_new and not en_old:
+            by_it[key] = r
+        else:
+            for h in fieldnames:
+                if not (cur.get(h) or '').strip() and (r.get(h) or '').strip():
+                    cur[h] = r[h]
+rows = [v for k,v in by_it.items()]
+# 4) sort by English_Translation (case-insensitive)
+rows.sort(key=lambda r: (r.get('English_Translation') or '').lower())
+w = csv.DictWriter(sys.stdout, fieldnames=fieldnames, lineterminator='\n')
+w.writeheader()
+for r in rows:
+    w.writerow({h: r.get(h, '') for h in fieldnames})
+PY
+  mv "$tmp" "$file"
 }
 
 # --- Parse CLI ---
@@ -64,171 +212,48 @@ while [[ $# -gt 0 ]]; do
     --add-italian)
       [[ $# -ge 2 ]] || { echo "Error: --add-italian requires a value" >&2; exit 1; }
       add_it+=("$2"); shift 2 ;;
+    --finalize)
+      finalize=true; shift ;;
     -h|--help)
       print_usage; exit 0 ;;
     *)
-      # Back-compat positional: <word>  or  <csv> <word>
-      if [[ ${#words[@]} -eq 0 && -z "$word_list" && ${#add_en[@]} -eq 0 && ${#add_it[@]} -eq 0 ]]; then
-        if [[ $# -eq 1 ]]; then
-          words+=("$1"); shift; continue
-        elif [[ $# -ge 2 ]]; then
-          csv_file="$1"; words+=("$2"); shift 2; continue
-        fi
-      fi
       echo "Unknown argument: $1" >&2; print_usage; exit 1 ;;
   esac
 done
 
-
-# --- List ingestion helpers ---
-trim_line() {
-  # usage: trim_line "str" -> echoes trimmed version
-  typeset s="$1"
-  # trim leading spaces
-  s="${s##[[:space:]]}"
-  # trim trailing spaces
-  s="${s%%[[:space:]]}"
-  print -- "$s"
-}
-
-ingest_list_file() {
-  # usage: ingest_list_file <path> <array-name-to-append>
-  typeset path="$1" aname="$2"
-  if [[ ! -f "$path" ]]; then
-    print -u2 -- "Error: word list not found: $path"
-    return 1
-  fi
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    typeset w
-    w=$(trim_line "$line")
-    [[ -z "$w" || "$w" == \#* ]] && continue
-    eval "$aname+=(\"$w\")"
-  done < "$path"
-}
-
-expand_add_args_from_files() {
-  # usage: expand_add_args_from_files <array-name>
-  typeset aname="$1"
-  typeset -a original expanded
-  eval "original=(\"\${${aname}[@]:-}\")"
-  for item in "${original[@]}"; do
-    if [[ -f "$item" ]]; then
-      # treat item as a file and ingest each non-empty/non-comment line
-      while IFS= read -r line || [[ -n "$line" ]]; do
-        typeset w
-        w=$(trim_line "$line")
-        [[ -z "$w" || "$w" == \#* ]] && continue
-        expanded+=("$w")
-      done < "$item"
-    else
-      expanded+=("$item")
-    fi
-  done
-  eval "$aname=(\"\${expanded[@]}\")"
-}
-
-# Ingest word list (for checks)
-if [[ -n "$word_list" ]]; then
-  ingest_list_file "$word_list" words || exit 1
-fi
-
-# Allow --add-english/--add-italian to accept a filepath whose lines are terms
-expand_add_args_from_files add_en
-expand_add_args_from_files add_it
-
-# Ensure dependencies
-for bin in csvcut; do
-  if ! command -v "$bin" >/dev/null 2>&1; then
-    echo "Error: $bin (csvkit) is required." >&2
-    exit 1
-  fi
-done
-
-# Validate CSV exists
+# --- Validate CSV exists ---
 if [[ ! -f "$csv_file" ]]; then
   echo "Error: CSV dictionary not found: $csv_file" >&2
   exit 1
 fi
 
-# Column indices & count
-get_col_idx() { # name -> index
-  local name="$1"
-  csvcut -n "$csv_file" | awk -F: -v n="$name" 'tolower($2) ~ tolower(n) {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); print $1}'
-}
+# Expand list inputs
+[[ -n "$word_list" ]] && ingest_list_file "$word_list" words
+expand_add_args_from_files add_en
+expand_add_args_from_files add_it
 
-et_col_idx=$(get_col_idx "English_Translation" || true)
-it_col_idx=$(get_col_idx "Italian_Term" || true)
-col_count=$(csvcut -n "$csv_file" | wc -l | tr -d ' ')
-
-if [[ -z "$et_col_idx" || -z "$it_col_idx" || -z "$col_count" || "$col_count" -lt 1 ]]; then
-  echo "Error: Required columns not found or invalid CSV header." >&2
-  echo "       Need columns: English_Translation, Italian_Term" >&2
-  exit 1
-fi
-
-# Helpers
-csv_escape() {
-  local s="$1"
-  local needs=0
-  [[ "$s" == *","* || "$s" == *"\""* || "$s" == *$'\n'* ]] && needs=1
-  s="${s//\"/\"\"}"
-  if (( needs )); then
-    printf '"%s"' "$s"
-  else
-    printf '%s' "$s"
-  fi
-}
-
-has_value_in_col() { # name value -> exit 0 if exists
-  local col_name="$1"; shift
-  local needle="$*"
-  csvcut -c "$col_name" "$csv_file" \
-    | awk -v w="$needle" 'BEGIN{IGNORECASE=1} NR==1{next} {if (tolower($0)==tolower(w)) {found=1; exit}} END{exit(found?0:1)}'
-}
-
-append_value_to_idx() { # idx value -> append one row with value placed in idx
-  local idx="$1"; shift
-  local val="$*"
-  local row=""
-  local i=1
-  local esc
-  esc=$(csv_escape "$val")
-  while (( i <= col_count )); do
-    local cell=""
-    (( i == idx )) && cell="$esc"
-    if (( i == 1 )); then
-      row="$cell"
-    else
-      row="$row,$cell"
-    fi
-    (( i++ ))
-  done
-  printf '%s\n' "$row" >> "$csv_file"
-}
-
-# Original check helpers (English_Translation only)
-has_word() { has_value_in_col "English_Translation" "$1"; }
-
-# --- Perform additions first (if requested) ---
+# --- Perform additions first (skip if exists) ---
 for e in "${add_en[@]:-}"; do
-  if has_value_in_col "English_Translation" "$e"; then
+  [[ -z "$e" ]] && continue
+  if py_has_value_in_col "English_Translation" "$e" "$csv_file"; then
     echo "English already exists: $e"
   else
-    append_value_to_idx "$et_col_idx" "$e"
+    py_append_in_col "English_Translation" "$e" "$csv_file"
     echo "English added: $e"
   fi
 done
 
 for iword in "${add_it[@]:-}"; do
-  if has_value_in_col "Italian_Term" "$iword"; then
+  [[ -z "$iword" ]] && continue
+  if py_has_value_in_col "Italian_Term" "$iword" "$csv_file"; then
     echo "Italian already exists: $iword"
   else
-    append_value_to_idx "$it_col_idx" "$iword"
+    py_append_in_col "Italian_Term" "$iword" "$csv_file"
     echo "Italian added: $iword"
   fi
 done
 
-# --- If there are check requests, process them ---
+# --- Check mode ---
 single_mode=false
 if [[ ${#words[@]} -eq 1 && -z "${word_list}" ]]; then
   single_mode=true
@@ -236,19 +261,16 @@ fi
 
 for w in "${words[@]:-}"; do
   [[ -z "$w" ]] && continue
-  if has_word "$w"; then
-    if $single_mode; then
-      echo yes
-    else
-      echo "$w: yes"
-    fi
+  if py_has_value_in_col "English_Translation" "$w" "$csv_file"; then
+    $single_mode && echo yes || echo "$w: yes"
   else
-    lower_w="${w:l}"
-    append_value_to_idx "$et_col_idx" "$lower_w"
-    if $single_mode; then
-      echo no
-    else
-      echo "$w: no"
-    fi
+    $single_mode && echo no  || echo "$w: no"
   fi
 done
+
+# --- Finalize (optional) ---
+if $finalize; then
+  echo "Finalizing (dedupe + sort)..."
+  finalize_csv "$csv_file"
+  echo "Finalized: $csv_file"
+fi

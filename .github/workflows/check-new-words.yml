@@ -1,0 +1,75 @@
+name: Check + Translate Dictionary
+on:
+  push:
+    paths:
+      - 'Data Sources/new_*.txt'
+      - 'Scripts/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write  # only if you commit changes back
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}  # available to all steps
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install requests
+
+      # If you need zsh for your earlier step
+      - name: Install zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh
+
+      - name: Make scripts executable
+        run: chmod +x Scripts/checkDictionary.zsh
+
+      - name: Run dictionary check (adds new words)
+        run: |
+          if [ -s "Data Sources/new_english_words.txt" ]; then
+            ./Scripts/checkDictionary.zsh --add-english "Data Sources/new_english_words.txt" --dict "Data Sources/Dictionary.csv"
+          fi
+          if [ -s "Data Sources/new_italian_words.txt" ]; then
+            ./Scripts/checkDictionary.zsh --add-italian "Data Sources/new_italian_words.txt" --dict "Data Sources/Dictionary.csv"
+          fi
+
+      - name: Finalize dictionary (dedupe + sort)
+        run: |
+          ./Scripts/checkDictionary.zsh --finalize --dict "Data Sources/Dictionary.csv"
+
+      - name: Translate (vocab EN→IT)
+        run: |
+          python3 Scripts/DeepL_Translator.py \
+            -i "Data Sources/Dictionary.csv" \
+            -o "Data Sources/Dictionary.csv" \
+            --mode-vocabulary --only-missing --translate-to-italian
+
+      - name: Translate (vocab IT→EN)
+        run: |
+          python3 Scripts/DeepL_Translator.py \
+            -i "Data Sources/Dictionary.csv" \
+            -o "Data Sources/Dictionary.csv" \
+            --mode-vocabulary --only-missing --translate-to-english
+
+      - name: Finalize dictionary after translations (dedupe + sort)
+        run: |
+          ./Scripts/checkDictionary.zsh --finalize --dict "Data Sources/Dictionary.csv"
+
+      # Commit back (optional)
+      - name: Commit and push updates
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "Data Sources/Dictionary.csv" || true
+          git commit -m "Update translations via DeepL_Translator.py" || exit 0
+          git push

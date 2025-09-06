@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
 # file: DeepL_Translator.py
 # Usage examples:
-#   python3 DeepL_Translator.py -i input.csv --mode-vocabulary --translate-to-italian
-#   python3 DeepL_Translator.py -i input.csv --mode-sentence   --translate-to-italian
-#   python3 DeepL_Translator.py -i input.csv --mode-vocabulary --translate-to-english
-#   python3 DeepL_Translator.py -i input.csv --mode-sentence   --translate-to-english
-#   # You can enable both vocab+sentence by passing both mode flags:
-#   python3 DeepL_Translator.py -i input.csv --mode-vocabulary --mode-sentence
-#   # Legacy (deprecated) --mode still works: vocab | sentence | both
+#   python3 DeepL_Translator.py -i "Dictionary.csv"
+#   python3 DeepL_Translator.py -i input.csv -o output.csv
 #   # Non-interactive examples (optional flags):
-#   python3 DeepL_Translator.py -i input.csv --mode both --only-missing --translate-to-italian
+#   python3 DeepL_Translator.py -i input.csv --mode vocab --overwrite
+#   python3 DeepL_Translator.py -i input.csv --mode sentence
+#   python3 DeepL_Translator.py -i input.csv --mode both
+#
+# Columns supported (case-sensitive):
+#   Vocabulary: English_Translation  -> Italian_Term
+#   Sentences:  English_Sentence -> Italian_Sentence
+#
+# Notes:
+# - Talks to DeepL API (free or paid). Does NOT store the API key in the script; it
+#   asks for it at runtime (or uses the DEEPL_API_KEY env var if present).
+# - By default this script will PROMPT you for (1) what to translate and (2) whether
+#   to only fill missing values or overwrite existing ones. You can also pass flags
+#   to skip prompts for automation.
 
 import argparse
 import csv
@@ -119,42 +127,38 @@ def ensure_columns(fieldnames: List[str], needed: List[str]):
 
 def process_rows(rows: List[Dict[str, str]], do_vocab: bool, do_sentence: bool, *,
                  overwrite: bool, url: str, auth_key: str,
-                 COL_SRC_TERM: str, COL_DST_TERM: str,
-                 COL_SRC_SENT: str, COL_DST_SENT: str,
-                 source_lang: str, target_lang: str) -> Dict[str, int]:
+                 COL_EN_TERM: str, COL_IT_TRANS: str,
+                 COL_EN_SENT: str, COL_IT_SENT: str) -> Dict[str, int]:
     updated_vocab = updated_sent = skipped = 0
 
     for row in rows:
         # Vocab path
         if do_vocab:
-            src = (row.get(COL_SRC_TERM) or "").strip()
-            cur_dst = (row.get(COL_DST_TERM) or "").strip()
-            if src and (overwrite or not cur_dst):
-                tr = translate(src, url=url, auth_key=auth_key, source_lang=source_lang, target_lang=target_lang)
+            eng = (row.get(COL_EN_TERM) or "").strip()
+            cur_it = (row.get(COL_IT_TRANS) or "").strip()
+            if eng and (overwrite or not cur_it):
+                tr = translate(eng, url=url, auth_key=auth_key)
                 if tr:
-                    row[COL_DST_TERM] = tr
+                    row[COL_IT_TRANS] = tr
                     updated_vocab += 1
-                    print(f"[OK] vocab: {src} -> {tr}")
+                    print(f"[OK] vocab: {eng} -> {tr}")
                 else:
-                    print(f"[WARN] vocab no translation for: {src}")
+                    print(f"[WARN] vocab no translation for: {eng}")
             else:
                 skipped += 1
 
         # Sentence path
         if do_sentence:
-            src_sent = (row.get(COL_SRC_SENT) or "").strip()
-            cur_dst_sent = (row.get(COL_DST_SENT) or "").strip()
-            if src_sent and (overwrite or not cur_dst_sent):
-                tr = translate(src_sent, url=url, auth_key=auth_key, source_lang=source_lang, target_lang=target_lang)
+            en_sent = (row.get(COL_EN_SENT) or "").strip()
+            cur_it_sent = (row.get(COL_IT_SENT) or "").strip()
+            if en_sent and (overwrite or not cur_it_sent):
+                tr = translate(en_sent, url=url, auth_key=auth_key)
                 if tr:
-                    row[COL_DST_SENT] = tr
+                    row[COL_IT_SENT] = tr
                     updated_sent += 1
-                    short_src = src_sent[:60] + ('...' if len(src_sent)>60 else '')
-                    short_tr  = tr[:60] + ('...' if len(tr)>60 else '')
-                    print(f"[OK] sentence: {short_src} -> {short_tr}")
+                    print(f"[OK] sentence: {en_sent[:60]}{'...' if len(en_sent)>60 else ''} -> {tr[:60]}{'...' if len(tr)>60 else ''}")
                 else:
-                    preview = src_sent[:80] + ('...' if len(src_sent)>80 else '')
-                    print(f"[WARN] sentence no translation for: {preview}")
+                    print(f"[WARN] sentence no translation for: {en_sent[:80]}{'...' if len(en_sent)>80 else ''}")
             else:
                 skipped += 1
 
@@ -167,14 +171,10 @@ def main():
     ap.add_argument("-o", "--output", help="Output CSV path (default: input basename + .out.csv)")
     ap.add_argument("--url", default=DEFAULT_URL, help=f"DeepL endpoint (default: {DEFAULT_URL}; paid: https://api.deepl.com/v2/translate)")
     # Optional non-interactive flags (if omitted, prompts will be shown)
-    ap.add_argument("--mode", choices=["vocab", "sentence", "both"], help="[DEPRECATED] Use --mode-sentence and/or --mode-vocabulary instead (vocab|sentence|both).")
+    ap.add_argument("--mode", choices=["vocab", "sentence", "both"], help="What to translate (default: prompt)")
     ap.add_argument("--overwrite", action="store_true", help="Overwrite existing values (default: prompt)")
     ap.add_argument("--only-missing", action="store_true", help="Only update missing values (default: prompt)")
     ap.add_argument("--dry-run", action="store_true", help="Show what would change without writing file")
-    ap.add_argument("--mode-sentence", action="store_true", help="Translate sentences (English_Sentence ↔ Italian_Sentence).")
-    ap.add_argument("--mode-vocabulary", action="store_true", help="Translate vocabulary (English_Translation ↔ Italian_Term).")
-    ap.add_argument("--translate-to-english", action="store_true", help="Set target to English (source Italian).")
-    ap.add_argument("--translate-to-italian", action="store_true", help="Set target to Italian (source English). Default if neither is provided.")
     args = ap.parse_args()
 
     in_path = args.input
@@ -183,37 +183,14 @@ def main():
 
     out_path = args.output or os.path.splitext(in_path)[0] + ".out.csv"
 
-    # Determine translation direction
-    if args.translate_to_english and args.translate_to_italian:
-        sys.exit("Specify at most one of --translate-to-english or --translate-to-italian.")
-    if args.translate_to_english:
-        source_lang, target_lang = "IT", "EN"
-        COL_SRC_TERM = "Italian_Term";       COL_DST_TERM = "English_Translation"
-        COL_SRC_SENT = "Italian_Sentence";   COL_DST_SENT = "English_Sentence"
+    # Determine mode (prompt if not provided)
+    if args.mode:
+        mode = args.mode
     else:
-        # default: to Italian
-        source_lang, target_lang = "EN", "IT"
-        COL_SRC_TERM = "English_Translation"; COL_DST_TERM = "Italian_Term"
-        COL_SRC_SENT = "English_Sentence";   COL_DST_SENT = "Italian_Sentence"
-
-    # Determine mode (new flags preferred; legacy --mode supported)
-    if args.mode_sentence or args.mode_vocabulary:
-        do_sentence = args.mode_sentence
-        do_vocab = args.mode_vocabulary
-    elif args.mode:
-        if args.mode == "vocab":
-            do_vocab, do_sentence = True, False
-        elif args.mode == "sentence":
-            do_vocab, do_sentence = False, True
-        elif args.mode == "both":
-            do_vocab, do_sentence = True, True
-        else:
-            sys.exit("Unknown --mode value. Use vocab|sentence|both.")
-    else:
-        # Interactive prompts if nothing specified
         mode = prompt_mode()
-        do_vocab = mode in ("vocab", "both")
-        do_sentence = mode in ("sentence", "both")
+
+    do_vocab = mode in ("vocab", "both")
+    do_sentence = mode in ("sentence", "both")
 
     # Determine overwrite behavior (prompt unless one of the flags was given)
     if args.overwrite and args.only_missing:
@@ -232,25 +209,27 @@ def main():
     with open(in_path, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames or []
+
+        COL_EN_TERM = "English_Translation"
+        COL_IT_TRANS = "Italian_Term"
+        COL_EN_SENT = "English_Sentence"
+        COL_IT_SENT = "Italian_Sentence"
+
         needed: List[str] = []
         if do_vocab:
-            needed += [COL_SRC_TERM, COL_DST_TERM]
+            needed += [COL_EN_TERM, COL_IT_TRANS]
         if do_sentence:
-            needed += [COL_SRC_SENT, COL_DST_SENT]
+            needed += [COL_EN_SENT, COL_IT_SENT]
         ensure_columns(fieldnames, needed)
+
         rows = list(reader)
 
-    print(f"[INFO] Direction: {source_lang} -> {target_lang}")
-    print(f"[INFO] Using columns — vocab: {COL_SRC_TERM} -> {COL_DST_TERM}; sentences: {COL_SRC_SENT} -> {COL_DST_SENT}")
+    print(f"[INFO] Using columns — vocab: {COL_EN_TERM} -> {COL_IT_TRANS}; sentences: {COL_EN_SENT} -> {COL_IT_SENT}")
 
     # Process
-    stats = process_rows(
-        rows, do_vocab, do_sentence,
-        overwrite=overwrite, url=args.url, auth_key=auth_key,
-        COL_SRC_TERM=COL_SRC_TERM, COL_DST_TERM=COL_DST_TERM,
-        COL_SRC_SENT=COL_SRC_SENT, COL_DST_SENT=COL_DST_SENT,
-        source_lang=source_lang, target_lang=target_lang,
-    )
+    stats = process_rows(rows, do_vocab, do_sentence, overwrite=overwrite, url=args.url, auth_key=auth_key,
+                          COL_EN_TERM=COL_EN_TERM, COL_IT_TRANS=COL_IT_TRANS,
+                          COL_EN_SENT=COL_EN_SENT, COL_IT_SENT=COL_IT_SENT)
 
     # Dry run summary
     if args.dry_run:

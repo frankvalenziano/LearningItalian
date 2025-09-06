@@ -1,4 +1,4 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env/zsh
 # Check or add words in Dictionary.csv
 #
 # Features

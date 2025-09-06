@@ -46,6 +46,7 @@ Options:
 Notes:
   * Matching is case-insensitive and exact (no trimming beyond whitespace).
   * Appends create a new row with only the target column set; all other columns remain empty.
+  * Inputs are normalized to lowercase on write (and checks are case-insensitive).
   * Finalize removes exact-duplicate rows, merges duplicates by EN/IT keys (preferring filled counterparts), then sorts by English_Translation.
 USAGE
 }
@@ -235,21 +236,23 @@ expand_add_args_from_files add_it
 # --- Perform additions first (skip if exists) ---
 for e in "${add_en[@]:-}"; do
   [[ -z "$e" ]] && continue
-  if py_has_value_in_col "English_Translation" "$e" "$csv_file"; then
-    echo "English already exists: $e"
+  e_norm=${e:l}
+  if py_has_value_in_col "English_Translation" "$e_norm" "$csv_file"; then
+    echo "English already exists: $e_norm"
   else
-    py_append_in_col "English_Translation" "$e" "$csv_file"
-    echo "English added: $e"
+    py_append_in_col "English_Translation" "$e_norm" "$csv_file"
+    echo "English added: $e_norm"
   fi
 done
 
 for iword in "${add_it[@]:-}"; do
   [[ -z "$iword" ]] && continue
-  if py_has_value_in_col "Italian_Term" "$iword" "$csv_file"; then
-    echo "Italian already exists: $iword"
+  i_norm=${iword:l}
+  if py_has_value_in_col "Italian_Term" "$i_norm" "$csv_file"; then
+    echo "Italian already exists: $i_norm"
   else
-    py_append_in_col "Italian_Term" "$iword" "$csv_file"
-    echo "Italian added: $iword"
+    py_append_in_col "Italian_Term" "$i_norm" "$csv_file"
+    echo "Italian added: $i_norm"
   fi
 done
 
@@ -261,10 +264,11 @@ fi
 
 for w in "${words[@]:-}"; do
   [[ -z "$w" ]] && continue
-  if py_has_value_in_col "English_Translation" "$w" "$csv_file"; then
-    $single_mode && echo yes || echo "$w: yes"
+  w_norm=${w:l}
+  if py_has_value_in_col "English_Translation" "$w_norm" "$csv_file"; then
+    $single_mode && echo yes || echo "$w_norm: yes"
   else
-    $single_mode && echo no  || echo "$w: no"
+    $single_mode && echo no  || echo "$w_norm: no"
   fi
 done
 

@@ -28,7 +28,8 @@ jobs:
             --word-list "Data Sources/new_words.txt"
 
       - name: Clear new_words.txt (optional)
-        run: : > "Data Sources/new_words.txt"
+        run: |
+          : > "Data Sources/new_words.txt"
 
       - name: Commit and push changes
         run: |

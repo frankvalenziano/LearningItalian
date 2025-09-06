@@ -12,6 +12,7 @@
   - [B2 (Upper Intermediate)](#b2-upper-intermediate)
   - [C1 (Advanced)](#c1-advanced)
   - [C2 (Mastery)](#c2-mastery)
+- [Conjugation Roadmap by CEFR Level](#conjugation-roadmap-by-cefr-level)
 - [Actionable Plan for Each CEFR Level](#actionable-plan-for-each-cefr-level)
 
 ---
@@ -89,6 +90,45 @@ This project aims to provide a structured plan and requirements for progressing 
 - Understand and produce sophisticated language  
 - Read and interpret advanced literature and technical texts  
 - Write with precision and style  
+
+---
+
+## Conjugation Roadmap by CEFR Level
+
+### A1 (Beginner)
+- *Presente* (regular verbs, core irregulars)  
+- *Passato Prossimo* (basic forms)  
+- Basic *Imperativo*  
+- Reflexive verbs in the present tense  
+
+### A2 (Elementary)
+- *Imperfetto*  
+- *Futuro semplice*  
+- Expanded *Passato Prossimo* including reflexives  
+- More irregular verbs  
+
+### B1 (Intermediate)
+- *Trapassato prossimo*  
+- *Condizionale presente*  
+- *Congiuntivo presente*  
+- Basic *Congiuntivo imperfetto*  
+- Full *Imperativo* forms  
+
+### B2 (Upper Intermediate)
+- *Futuro anteriore*  
+- Expanded *Congiuntivo imperfetto* and *Trapassato*  
+- *Condizionale passato*  
+- Recognition of *Passato remoto*  
+
+### C1 (Advanced)
+- Active use of *Passato remoto*  
+- Recognition of *Trapassato remoto*  
+- Full subjunctive and conditional sequencing  
+- Use of *gerundio*, *participio*, and *infinito* in complex clauses  
+
+### C2 (Mastery)
+- Complete mastery of all conjugations including rare and archaic forms  
+- Full stylistic control over verb forms  
 
 ---
 

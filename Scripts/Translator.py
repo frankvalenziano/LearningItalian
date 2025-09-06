@@ -1,0 +1,330 @@
+#!/usr/bin/env python3
+# file: Translator.py (now supports DeepL or Google Cloud Translate)
+# Usage examples:
+#   python3 Translator.py -i Dictionary.csv --deepl            # use DeepL (default free endpoint)
+#   python3 Translator.py -i input.csv --deepl --mode vocab
+#   python3 Translator.py -i input.csv --deepl --mode sentence --only-missing
+#   python3 Translator.py -i input.csv --deepl --mode both --overwrite
+#   python3 Translator.py -i input.csv --google                 # use Google Cloud Translation v2
+#   python3 Translator.py -i input.csv --google --mode both
+#   # Optional endpoint overrides:
+#   #   --url https://api.deepl.com/v2/translate           (DeepL paid)
+#   #   --google-url https://translation.googleapis.com/language/translate/v2
+#
+# Columns supported (case-sensitive):
+#   Vocabulary: English_Translation  -> Italian_Term
+#   Sentences:  English_Sentence     -> Italian_Sentence
+#
+# Notes:
+# - For DeepL, provide key via DEEPL_API_KEY or prompt.
+# - For Google, provide key via GOOGLE_API_KEY or prompt. Uses Google Cloud Translation API v2.
+# - By default this script will PROMPT you for (1) what to translate and (2) whether
+#   to only fill missing values or overwrite existing ones. You can also pass flags
+#   to skip prompts for automation.
+
+import argparse
+import csv
+import os
+import sys
+import time
+from typing import Optional, List, Dict, Callable
+from getpass import getpass
+
+import requests
+
+# Default to the DeepL Free endpoint. You can override with --url to use the paid endpoint.
+DEFAULT_URL = "https://api-free.deepl.com/v2/translate"
+DEFAULT_GOOGLE_URL = "https://translation.googleapis.com/language/translate/v2"
+
+
+# --------------------------- API Key Handling ---------------------------
+
+def get_deepl_key_interactive() -> str:
+    """Return a DeepL API key, preferring env var DEEPL_API_KEY, else prompt securely."""
+    key = os.environ.get("DEEPL_API_KEY", "").strip()
+    if key:
+        return key
+    # Prompt without echoing to terminal
+    while True:
+        key = getpass("Enter your DeepL API key: ").strip()
+        if key:
+            return key
+        print("API key cannot be empty. Please try again.")
+
+
+# Google API Key Handling
+
+def get_google_key_interactive() -> str:
+    """Return a Google Cloud Translation API key, preferring env var GOOGLE_API_KEY, else prompt securely."""
+    key = os.environ.get("GOOGLE_API_KEY", "").strip()
+    if key:
+        return key
+    while True:
+        key = getpass("Enter your Google Cloud Translation API key: ").strip()
+        if key:
+            return key
+        print("API key cannot be empty. Please try again.")
+
+
+# ----------------------------- Translation -----------------------------
+
+def translate_via_deepl(text: str, url: str, auth_key: str, source_lang: str = "EN", target_lang: str = "IT",
+              timeout: float = 20.0, retries: int = 3) -> Optional[str]:
+    """Translate text via DeepL. Returns None on failure."""
+    if not text:
+        return None
+
+    params = {
+        "text": text,
+        "source_lang": source_lang,
+        "target_lang": target_lang,
+        "formality": "default",
+    }
+
+    delay = 1.5
+    for attempt in range(1, retries + 1):
+        try:
+            r = requests.post(url, data=params, headers={"Authorization": f"DeepL-Auth-Key {auth_key}"}, timeout=timeout)
+            if r.status_code in (400, 403):
+                # Fallback to form-data auth_key (rarely needed but harmless)
+                r = requests.post(url, data={**params, "auth_key": auth_key}, timeout=timeout)
+            r.raise_for_status()
+            data = r.json()
+            translations = data.get("translations") or []
+            if translations and isinstance(translations, list):
+                return translations[0].get("text")
+            return None
+        except Exception as e:
+            if attempt == retries:
+                sys.stderr.write(f"[ERROR] Failed to translate: {e}\n")
+                return None
+            time.sleep(delay)
+            delay *= 1.7  # simple backoff
+
+
+def translate_via_google(text: str, url: str, api_key: str, source_lang: str = "en", target_lang: str = "it",
+                         timeout: float = 20.0, retries: int = 3) -> Optional[str]:
+    """Translate text via Google Cloud Translation v2. Returns None on failure."""
+    if not text:
+        return None
+
+    params = {
+        "q": text,
+        "source": source_lang,
+        "target": target_lang,
+        "format": "text",
+        "key": api_key,
+    }
+
+    delay = 1.5
+    for attempt in range(1, retries + 1):
+        try:
+            r = requests.post(url, data=params, timeout=timeout)
+            r.raise_for_status()
+            data = r.json()
+            translations = (data.get("data") or {}).get("translations") or []
+            if translations and isinstance(translations, list):
+                return translations[0].get("translatedText")
+            return None
+        except Exception as e:
+            if attempt == retries:
+                sys.stderr.write(f"[ERROR] Failed to translate (Google): {e}\n")
+                return None
+            time.sleep(delay)
+            delay *= 1.7
+
+
+# ------------------------------ Prompts --------------------------------
+
+def prompt_mode() -> str:
+    """Prompt the user for translation mode: vocab, sentence, both."""
+    print("\nWhat would you like to translate?")
+    print("  1) English → Italian Vocabulary (English_Translation → Italian_Term)")
+    print("  2) English → Italian Sentence   (English_Sentence → Italian_Sentence)")
+    print("  3) Both")
+    while True:
+        choice = input("Choose 1, 2, or 3: ").strip()
+        if choice == "1":
+            return "vocab"
+        if choice == "2":
+            return "sentence"
+        if choice == "3":
+            return "both"
+        print("Invalid choice. Please enter 1, 2, or 3.")
+
+
+def prompt_overwrite() -> bool:
+    """Prompt whether to only update missing values or overwrite existing."""
+    print("\nUpdate behavior:")
+    print("  1) Only update missing entries")
+    print("  2) Overwrite existing entries")
+    while True:
+        choice = input("Choose 1 or 2: ").strip()
+        if choice == "1":
+            return False  # don't overwrite
+        if choice == "2":
+            return True   # overwrite
+        print("Invalid choice. Please enter 1 or 2.")
+
+
+# ------------------------------ Main Logic -----------------------------
+
+def ensure_columns(fieldnames: List[str], needed: List[str]):
+    missing = [c for c in needed if c not in fieldnames]
+    if missing:
+        sys.exit(f"CSV is missing required column(s): {', '.join(missing)}")
+
+
+def process_rows(rows: List[Dict[str, str]], do_vocab: bool, do_sentence: bool, *,
+                 overwrite: bool, translate_func: Callable[[str], Optional[str]],
+                 COL_EN_TERM: str, COL_IT_TRANS: str,
+                 COL_EN_SENT: str, COL_IT_SENT: str) -> Dict[str, int]:
+    updated_vocab = updated_sent = skipped = 0
+
+    for row in rows:
+        # Vocab path
+        if do_vocab:
+            eng = (row.get(COL_EN_TERM) or "").strip()
+            cur_it = (row.get(COL_IT_TRANS) or "").strip()
+            if eng and (overwrite or not cur_it):
+                tr = translate_func(eng)
+                if tr:
+                    row[COL_IT_TRANS] = tr
+                    updated_vocab += 1
+                    print(f"[OK] vocab: {eng} -> {tr}")
+                else:
+                    print(f"[WARN] vocab no translation for: {eng}")
+            else:
+                skipped += 1
+
+        # Sentence path
+        if do_sentence:
+            en_sent = (row.get(COL_EN_SENT) or "").strip()
+            cur_it_sent = (row.get(COL_IT_SENT) or "").strip()
+            if en_sent and (overwrite or not cur_it_sent):
+                tr = translate_func(en_sent)
+                if tr:
+                    row[COL_IT_SENT] = tr
+                    updated_sent += 1
+                    print(f"[OK] sentence: {en_sent[:60]}{'...' if len(en_sent)>60 else ''} -> {tr[:60]}{'...' if len(tr)>60 else ''}")
+                else:
+                    print(f"[WARN] sentence no translation for: {en_sent[:80]}{'...' if len(en_sent)>80 else ''}")
+            else:
+                skipped += 1
+
+    return {"updated_vocab": updated_vocab, "updated_sent": updated_sent, "skipped": skipped}
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Fill Italian translations using DeepL or Google Cloud Translation API (prompts for mode and overwrite).")
+    ap.add_argument("-i", "--input", required=True, help="Input CSV path")
+    ap.add_argument("-o", "--output", help="Output CSV path (default: input basename + .out.csv)")
+    ap.add_argument("--url", default=DEFAULT_URL, help=f"DeepL endpoint (default: {DEFAULT_URL}; paid: https://api.deepl.com/v2/translate)")
+    provider = ap.add_mutually_exclusive_group(required=True)
+    provider.add_argument("--google", action="store_true", help="Use Google Cloud Translation API v2")
+    provider.add_argument("--deepl", action="store_true", help="Use DeepL API")
+    ap.add_argument("--google-url", default=DEFAULT_GOOGLE_URL, help=f"Google endpoint (default: {DEFAULT_GOOGLE_URL})")
+    # Optional non-interactive flags (if omitted, prompts will be shown)
+    ap.add_argument("--mode", choices=["vocab", "sentence", "both"], help="What to translate (default: prompt)")
+    ap.add_argument("--overwrite", action="store_true", help="Overwrite existing values (default: prompt)")
+    ap.add_argument("--only-missing", action="store_true", help="Only update missing values (default: prompt)")
+    ap.add_argument("--dry-run", action="store_true", help="Show what would change without writing file")
+    args = ap.parse_args()
+
+    in_path = args.input
+    if not os.path.exists(in_path):
+        sys.exit(f"Input not found: {in_path}")
+
+    out_path = args.output or os.path.splitext(in_path)[0] + ".out.csv"
+
+    # Determine mode (prompt if not provided)
+    if args.mode:
+        mode = args.mode
+    else:
+        mode = prompt_mode()
+
+    do_vocab = mode in ("vocab", "both")
+    do_sentence = mode in ("sentence", "both")
+
+    # Determine overwrite behavior (prompt unless one of the flags was given)
+    if args.overwrite and args.only_missing:
+        sys.exit("Specify at most one of --overwrite or --only-missing.")
+    if args.overwrite:
+        overwrite = True
+    elif args.only_missing:
+        overwrite = False
+    else:
+        overwrite = prompt_overwrite()
+
+    # Provider setup
+    translate_func: Callable[[str], Optional[str]]
+    if args.google:
+        google_key = get_google_key_interactive()
+        g_url = args.google_url
+        translate_func = lambda text: translate_via_google(text, url=g_url, api_key=google_key)
+        print(f"[INFO] Provider: Google (url={g_url})")
+    else:
+        # DeepL
+        auth_key = get_deepl_key_interactive()
+        d_url = args.url
+        translate_func = lambda text: translate_via_deepl(text, url=d_url, auth_key=auth_key)
+        print(f"[INFO] Provider: DeepL (url={d_url})")
+
+    # Read all rows
+    with open(in_path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames or []
+
+        COL_EN_TERM = "English_Translation"
+        COL_IT_TRANS = "Italian_Term"
+        COL_EN_SENT = "English_Sentence"
+        COL_IT_SENT = "Italian_Sentence"
+
+        needed: List[str] = []
+        if do_vocab:
+            needed += [COL_EN_TERM, COL_IT_TRANS]
+        if do_sentence:
+            needed += [COL_EN_SENT, COL_IT_SENT]
+        ensure_columns(fieldnames, needed)
+
+        rows = list(reader)
+
+    print(f"[INFO] Using columns — vocab: {COL_EN_TERM} -> {COL_IT_TRANS}; sentences: {COL_EN_SENT} -> {COL_IT_SENT}")
+
+    # Process
+    stats = process_rows(
+        rows, do_vocab, do_sentence,
+        overwrite=overwrite,
+        translate_func=translate_func,
+        COL_EN_TERM=COL_EN_TERM, COL_IT_TRANS=COL_IT_TRANS,
+        COL_EN_SENT=COL_EN_SENT, COL_IT_SENT=COL_IT_SENT,
+    )
+
+    # Dry run summary
+    if args.dry_run:
+        print("\n[DRY RUN] Summary:")
+        if do_vocab:
+            print(f"  Vocab updated:   {stats['updated_vocab']}")
+        if do_sentence:
+            print(f"  Sentences updated:{stats['updated_sent']}")
+        print(f"  Skipped rows:     {stats['skipped']}")
+        print("No file written.")
+        return
+
+    # Write output
+    with open(out_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    print("\nDone.")
+    if do_vocab:
+        print(f"  Vocab updated:    {stats['updated_vocab']}")
+    if do_sentence:
+        print(f"  Sentences updated:{stats['updated_sent']}")
+    print(f"  Skipped rows:     {stats['skipped']}")
+    print(f"Wrote: {out_path}")
+
+
+if __name__ == "__main__":
+    main()

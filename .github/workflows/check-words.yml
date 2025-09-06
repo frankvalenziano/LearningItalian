@@ -1,0 +1,39 @@
+name: Check words and update Dictionary
+
+on:
+  push:
+    paths:
+      - "Data Sources/new_words.txt"   # Only run if new_words.txt changes
+
+jobs:
+  update-dictionary:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python and install csvkit
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install csvkit
+
+      - name: Make script executable
+        run: chmod +x "Scripts/checkDictionary.zsh"
+
+      - name: Run checker
+        run: |
+          ./Scripts/checkDictionary.zsh \
+            --dict "Data Sources/Dictionary.csv" \
+            --word-list "Data Sources/new_words.txt"
+
+      - name: Clear new_words.txt (optional)
+        run: : > "Data Sources/new_words.txt"
+
+      - name: Commit and push changes
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || git commit -m "Update Dictionary.csv via GitHub Action"
+          git push

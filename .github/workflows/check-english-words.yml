@@ -17,7 +17,12 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install csvkit
-
+     
+      - name: Install zsh
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
+          
       - name: Make script executable
         run: chmod +x "Scripts/checkDictionary.zsh"
 

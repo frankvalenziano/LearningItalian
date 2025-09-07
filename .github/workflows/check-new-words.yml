@@ -65,6 +65,17 @@ jobs:
         run: |
           ./Scripts/checkDictionary.zsh --finalize --dict "Data Sources/Dictionary.csv"
 
+      - name: Generate English example sentences
+        run: |
+          if [ -d "Data Sources/Sentence Mining/English Sources" ]; then
+            python3 Scripts/get_sentences.py \
+              --sources-dir "Data Sources/Sentence Mining/English Sources" \
+              --input-csv "Data Sources/Dictionary.csv" \
+              --output-csv "Data Sources/Dictionary.csv"
+          else
+            echo "No English Sources directory found; skipping sentence generation."
+          fi
+
       # Commit back (optional)
       - name: Commit and push updates
         if: success()

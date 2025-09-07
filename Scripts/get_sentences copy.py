@@ -70,14 +70,6 @@ go goes went gone make makes made say says said see sees saw seen know knows kne
 come comes came come take takes took taken give gives gave given tell tells told ask asks asked want wants wanted
 """.split())
 STOPWORDS = FUNC_WORDS  # alias for readability
-
-# ---------------------------
-# Preferred source filenames
-# ---------------------------
-PREFERRED_NAME_KEYWORDS = ("sujato", "brahmali", "theravada")
-
-def is_preferred_file(path: Path) -> bool:
-    return any(k in path.name.lower() for k in PREFERRED_NAME_KEYWORDS)
 def _extract_and_split_one(fp: Path) -> Tuple[Path, List[str]]:
     text = extract_text_from_file(fp)
     if not text:
@@ -433,10 +425,6 @@ def search_sources_for_term(
     prefer_shorter: bool = True,
     inverted: Optional[Dict[str, List[Tuple[int, int]]]] = None,
     files_list: Optional[List[Path]] = None,
-    *,
-    target_words: int = 8,
-    preferred_fids: Optional[Set[int]] = None,
-    file_id_of: Optional[Dict[Path, int]] = None,
 ) -> Optional[str]:
     """
     Search using an inverted index when available to avoid scanning all sentences.
@@ -445,7 +433,6 @@ def search_sources_for_term(
     term_re = build_match_regex(term)
     best: Optional[str] = None
     best_len: int = 10**9
-    best_score: Optional[Tuple[int, int, int]] = None  # (distance_to_target, preferred_rank, length)
     candidates: List[Tuple[int, int]] = []
 
     if inverted is not None:
@@ -464,35 +451,28 @@ def search_sources_for_term(
             if si >= len(s_list):
                 continue
             s2 = strip_outer_quotes(s_list[si])  # already a single sentence
-            if not term_re.search(s2):
-                continue
-            n = len(s2.split())
-            pref_rank = 0 if (preferred_fids is not None and fid in preferred_fids) else 1
-            score = (abs(n - target_words), pref_rank, n)
-            if best_score is None or score < best_score:
-                best_score = score
-                best = s2
-                best_len = n
+            if term_re.search(s2):
+                if prefer_shorter:
+                    n = len(s2.split())
+                    if n < best_len:
+                        best, best_len = s2, n
+                else:
+                    return s2
         return best
 
     # Fallback: rare word or OOV — scan all sentences (already split)
     for fp, sentences in file_sentences.items():
         if not sentences:
             continue
-        fid = file_id_of[fp] if file_id_of is not None else -1
         for s in sentences:
             s2 = strip_outer_quotes(s)
-            if not term_re.search(s2):
-                continue
-            if not seems_complete_sentence(s2, min_words, max_words):
-                continue
-            n = len(s2.split())
-            pref_rank = 0 if (preferred_fids is not None and fid in preferred_fids) else 1
-            score = (abs(n - target_words), pref_rank, n)
-            if best_score is None or score < best_score:
-                best_score = score
-                best = s2
-                best_len = n
+            if term_re.search(s2) and seems_complete_sentence(s2, min_words, max_words):
+                if prefer_shorter:
+                    n = len(s2.split())
+                    if n < best_len:
+                        best, best_len = s2, n
+                else:
+                    return s2
     return best
 
 
@@ -606,9 +586,8 @@ def main():
     ap.add_argument("--sources-dir", required=True, help="Directory containing .txt/.epub sources (searched recursively).")
     ap.add_argument("--input-csv", required=True, help="Input CSV with columns including English_Translation and English_Sentence.")
     ap.add_argument("--output-csv", required=True, help="Where to write the updated CSV.")
-    ap.add_argument("--min-words", type=int, default=3, help="Minimum words per sentence (default: 3).")
-    ap.add_argument("--max-words", type=int, default=28, help="Maximum words per sentence (default: 28).")
-    ap.add_argument("--target-words", type=int, default=8, help="Preferred sentence length; selection biases toward this length (default: 8).")
+    ap.add_argument("--min-words", type=int, default=6, help="Minimum words per sentence.")
+    ap.add_argument("--max-words", type=int, default=28, help="Maximum words per sentence.")
     ap.add_argument("--prefer-shorter", action="store_true", help="Prefer the shortest acceptable sentence if multiple are found.")
     ap.add_argument("--dry-run", action="store_true", help="Scan and report matches without writing the CSV.")
     ap.add_argument("--start-index", type=int, default=0, help="Row index to start from (0-based after header).")
@@ -689,9 +668,6 @@ def main():
     if not files:
         print(f"[WARN] No .txt or .epub files found in {sources_dir}", file=sys.stderr)
 
-    # Prefer sources whose filenames contain key terms (e.g., sujato, brahmali, theravada)
-    files.sort(key=lambda p: 0 if is_preferred_file(p) else 1)
-
     # Preload and pre-split each source once (major speedup)
     print(f"[INIT] Preloading {len(files)} files…")
     file_sentences: Dict[Path, List[str]] = {}
@@ -708,7 +684,6 @@ def main():
     # Build a lightweight inverted index: token (lowercased) -> list of (fid, sentence_index)
     files_list: List[Path] = list(files)
     file_id_of: Dict[Path, int] = {fp: i for i, fp in enumerate(files_list)}
-    preferred_fids: Set[int] = {file_id_of[fp] for fp in files_list if is_preferred_file(fp)}
     print("[INIT] Building inverted index…")
     from collections import defaultdict
     inverted: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
@@ -779,9 +754,6 @@ def main():
                 prefer_shorter=args.prefer_shorter,
                 inverted=inverted,
                 files_list=files_list,
-                target_words=int(args.target_words),
-                preferred_fids=preferred_fids,
-                file_id_of=file_id_of,
             )
             cache[key] = sentence
 

@@ -5,6 +5,7 @@
 # - Only fills empty cells in the IPA column (either 'IPA' or 'Italian_IPA') using the Italian text column (either 'Italian' or 'Italian_Translation').
 # - Wraps the generated IPA with slashes, to match your sheet (e.g., /aˈmo.re/).
 # - Works entirely offline once dependencies are installed.
+# - Auto mode: if you do not pass --italian-col/--ipa-col, the script will attempt to fill (Italian_Term -> Italian_IPA) and then (Italian_Sentence -> Italian_Sentence_IPA) if those columns exist.
 #
 # Dependencies (install locally on your Mac):
 #   brew install espeak-ng
@@ -14,6 +15,7 @@
 #   python fill_italian_ipa.py --input "/path/to/General Vocabulary.csv" --backup
 #   python fill_italian_ipa.py --input "/path/to/General Vocabulary.csv" --output updated.csv
 #   python fill_italian_ipa.py --input "/path/to/file.csv" --dry-run --debug
+#   python fill_italian_ipa.py --input "/path/to/General Vocabulary.csv"  # auto: fills Italian_IPA then Italian_Sentence_IPA
 #
 # Notes:
 # - This script supports two schemas:
@@ -69,6 +71,62 @@ def get_ipa_batch(words: List[str]) -> List[str]:
         return [s.strip() for s in ipa]
     return espeak_cli(words)
 
+def fill_pair(df: pd.DataFrame, text_col: str, ipa_col: str, batch_size: int, debug: bool) -> int:
+    """Fill empty IPA cells in ipa_col using phonemized values from text_col.
+    Returns the number of rows changed. Creates ipa_col if missing.
+    """
+    # Ensure columns exist
+    if text_col not in df.columns:
+        if debug:
+            print(f"SKIP: Text column '{text_col}' not found.")
+        return 0
+    if ipa_col not in df.columns:
+        df[ipa_col] = ""
+
+    # Normalize
+    ipa_raw = df[ipa_col]
+    ita_raw = df[text_col]
+    ipa_col_series = ipa_raw.fillna("").astype(str).str.replace("\u00A0", " ", regex=False).str.strip()
+    ipa_col_series = ipa_col_series.where(~ipa_col_series.str.lower().isin(["nan", "none", "null"]), "")
+    ita_col_series = ita_raw.fillna("").astype(str).str.replace("\u00A0", " ", regex=False).str.strip()
+
+    # Determine TODO
+    mask_missing = (ipa_col_series == "") & (ita_col_series != "")
+    todo = df[mask_missing].copy()
+
+    if debug:
+        print(f"\n>>> Pair: {text_col} -> {ipa_col}")
+        print("Total rows:", len(df))
+        print("Rows needing IPA:", len(todo))
+        print("First 5 indices needing IPA:", todo.index[:5].tolist())
+
+    if todo.empty:
+        return 0
+
+    indices: List[int] = todo.index.tolist()
+    italian_terms: List[str] = todo[text_col].astype(str).tolist()
+
+    changed = 0
+    for i in range(0, len(italian_terms), batch_size):
+        chunk = italian_terms[i:i+batch_size]
+        try:
+            out = get_ipa_batch(chunk)
+        except Exception as e:
+            print(f"Batch {i}-{i+len(chunk)} failed for pair {text_col}->{ipa_col}: {e}", file=sys.stderr)
+            sys.exit(2)
+        if len(out) != len(chunk):
+            print("Mismatch between inputs and outputs length; aborting.", file=sys.stderr)
+            sys.exit(3)
+        # Apply this chunk
+        for j, val in enumerate(out):
+            idx = indices[i + j]
+            if val is None:
+                continue
+            df.at[idx, ipa_col] = f"/{val}/"
+            changed += 1
+
+    return changed
+
 def main():
     ap = argparse.ArgumentParser(description="Fill missing Italian IPA in CSV using eSpeak NG.")
     ap.add_argument("--input", required=True, help="Path to the CSV (will be updated in-place unless --output or --dry-run)." )
@@ -76,8 +134,8 @@ def main():
     ap.add_argument("--backup", action="store_true", help="Write a .bak file next to the input before overwriting.")
     ap.add_argument("--dry-run", action="store_true", help="Do not write anything; just print what would change.")
     ap.add_argument("--batch-size", type=int, default=128, help="How many rows to send to G2P at once.")
-    ap.add_argument("--italian-col", required=True, help="Name of the Italian text column to phonemize.")
-    ap.add_argument("--ipa-col", required=True, help="Name of the IPA output column to write/fill. If it doesn't exist, it will be created.")
+    ap.add_argument("--italian-col", help="Name of the Italian text column to phonemize. If omitted, auto mode is used.")
+    ap.add_argument("--ipa-col", help="Name of the IPA output column to write/fill. If omitted, auto mode is used.")
     ap.add_argument("--debug", action="store_true", help="Print diagnostics about column names and empties.")
     args = ap.parse_args()
 
@@ -86,80 +144,54 @@ def main():
     # Normalize column names (trim stray spaces, weird unicode spaces)
     df.columns = [str(c).strip() for c in df.columns]
 
-    IT_COL = args.italian_col.strip()
-    IPA_COL = args.ipa_col.strip()
+    # Determine which pairs to process
+    pairs: List[tuple[str, str]] = []
+    if args.italian_col and args.ipa_col:
+        IT_COL = args.italian_col.strip()
+        IPA_COL = args.ipa_col.strip()
+        pairs.append((IT_COL, IPA_COL))
+    else:
+        # Auto mode: try known pairs
+        default_pairs = [("Italian_Term", "Italian_IPA"), ("Italian_Sentence", "Italian_Sentence_IPA")]
+        for tcol, ipacol in default_pairs:
+            if tcol in df.columns:
+                if ipacol not in df.columns:
+                    df[ipacol] = ""
+                pairs.append((tcol, ipacol))
 
-    if IT_COL not in df.columns:
-        print(f"ERROR: Italian text column '{IT_COL}' not found in input. Columns present: {list(df.columns)}", file=sys.stderr)
+    if not pairs:
+        print(
+            "ERROR: No valid column pairs found. Provide --italian-col and --ipa-col, or include one of the default pairs (Italian_Term->Italian_IPA, Italian_Sentence->Italian_Sentence_IPA).\n" \
+            f"Columns present: {list(df.columns)}",
+            file=sys.stderr,
+        )
         sys.exit(1)
-    if IPA_COL not in df.columns:
-        df[IPA_COL] = ""
-    schema = "custom"
 
-    # Treat empties/NaN/placeholder strings as empty
-    ipa_raw = df[IPA_COL]
-    ita_raw = df[IT_COL]
-    ipa_col = ipa_raw.fillna("")       # fill NaN first
-    ipa_col = ipa_col.astype(str).str.replace("\u00A0", " ", regex=False).str.strip()  # replace NBSP, trim
-    # Consider literal strings that mean 'empty'
-    ipa_col = ipa_col.where(~ipa_col.str.lower().isin(["nan", "none", "null"]), "")
+    total_changed = 0
+    previews = []
+    for (tcol, ipacol) in pairs:
+        before_mask = (df[ipacol].fillna("").astype(str).str.strip() == "") & (df[tcol].fillna("").astype(str).str.strip() != "") if ipacol in df.columns else (df[tcol].fillna("").astype(str).str.strip() != "")
+        # Capture preview indices before filling
+        preview_indices = df[before_mask].index[:10].tolist()
 
-    ita_col = ita_raw.fillna("").astype(str).str.replace("\u00A0", " ", regex=False).str.strip()
+        changed = fill_pair(df, tcol, ipacol, args.batch_size, args.debug)
+        total_changed += changed
 
-    # Determine which rows need IPA
-    mask_missing = (ipa_col == "") & (ita_col != "")
-    todo = df[mask_missing].copy()
-
-    if args.debug:
-        print(f"Using schema={schema} | IT_COL='{IT_COL}' | IPA_COL='{IPA_COL}'")
-        print("Columns:", list(df.columns))
-        print("Total rows:", len(df))
-        print("IPA empty candidates:", int((ipa_col == '').sum()))
-        print("Italian non-empty:", int((ita_col != '').sum()))
-        print("Rows needing IPA:", len(todo))
-        # Show a couple sample rows (indices) that are missing
-        print("First 5 indices needing IPA:", todo.index[:5].tolist())
-
-    if todo.empty:
-        print("No empty IPA cells found. Nothing to do.")
-        sys.exit(0)
-
-    print(f"Found {len(todo)} rows with empty IPA. Generating IPA using {'phonemizer+eSpeak' if HAS_PHONEMIZER else 'eSpeak NG CLI'}...")
-
-    # Process in batches
-    indices: List[int] = todo.index.tolist()
-    italian_terms: List[str] = todo[IT_COL].astype(str).tolist()
-    ipa_results: List[Optional[str]] = [None] * len(italian_terms)
-
-    for i in range(0, len(italian_terms), args.batch_size):
-        chunk = italian_terms[i:i+args.batch_size]
-        try:
-            out = get_ipa_batch(chunk)
-        except Exception as e:
-            print(f"Batch {i}-{i+len(chunk)} failed: {e}", file=sys.stderr)
-            sys.exit(2)
-        if len(out) != len(chunk):
-            print("Mismatch between inputs and outputs length; aborting.", file=sys.stderr)
-            sys.exit(3)
-        for j, val in enumerate(out):
-            ipa_results[i + j] = val
-
-    # Apply results to dataframe, wrapping with slashes
-    changed = 0
-    for idx, ipa in zip(indices, ipa_results):
-        if ipa is None:
-            continue
-        ipa_wrapped = f"/{ipa}/"
-        df.at[idx, IPA_COL] = ipa_wrapped
-        changed += 1
-
-    print(f"Prepared IPA for {changed} rows.")
+        # Build preview after filling
+        if args.dry_run and preview_indices:
+            previews.append((tcol, ipacol, df.loc[preview_indices, [tcol, ipacol]].copy()))
 
     if args.dry_run:
-        preview = df.loc[indices[:10], [IT_COL, IPA_COL]]
-        print(preview.to_string(index=False))
+        if previews:
+            for (tcol, ipacol, pv) in previews:
+                print(f"\nPreview for {tcol} -> {ipacol} (up to 10 rows):")
+                print(pv.to_string(index=False))
         print("\nDry run complete. No files were written.")
         return
+
+    if total_changed == 0:
+        print("No empty IPA cells found. Nothing to do.")
+        sys.exit(0)
 
     # Write output
     if args.output:
@@ -168,8 +200,9 @@ def main():
     else:
         if args.backup:
             from pathlib import Path
-            backup_path = Path(args.input).with_suffix(Path(args.input).suffix + ".bak")
-            backup_path.write_bytes(Path(args.input).read_bytes())
+            p = Path(args.input)
+            backup_path = p.with_suffix(p.suffix + ".bak")
+            backup_path.write_bytes(p.read_bytes())
             print(f"Backup written to: {backup_path}")
         df.to_csv(args.input, index=False)
         print(f"Updated CSV written in place: {args.input}")

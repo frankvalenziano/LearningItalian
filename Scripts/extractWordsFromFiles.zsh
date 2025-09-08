@@ -45,7 +45,7 @@ EOS
 }
 
 # Defaults
-output_file="/Users/frank/Documents/Tech/Code/LearningItalian/Data Sources/new_words.txt"
+output_file=""
 freq_file=""
 minlen=3
 stopwords_file=""

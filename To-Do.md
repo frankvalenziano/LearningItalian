@@ -1,0 +1,2 @@
+# Quality Control
+- Right now all the words and sentences are based off the English dictionary list which causes the sentence scraper to sometimes find mismatched conjugations in the example sentences. This does not hinder learning and may be helpful in exposure to conjugations, but for purity's sake the project should have sentence scraping performed based off the Italian term and find natural language Italian sentences. This requires finding modern Italian sources that fall under public domain, creative commons, or something similar

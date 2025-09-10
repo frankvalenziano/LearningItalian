@@ -1,3 +1,4 @@
 # Quality Control
 - Right now all the words and sentences are based off the English dictionary list which causes the sentence scraper to sometimes find mismatched conjugations in the example sentences. This does not hinder learning and may be helpful in exposure to conjugations, but for purity's sake the project should have sentence scraping performed based off the Italian term and find natural language Italian sentences. This requires finding modern Italian sources that fall under public domain, creative commons, or something similar
 - Automate the IPA generation through GitHub actions when the new_english_words.txt or new_italian_words.txt is updated
+- Generate vocabulary from the Italian sentences already in the dictionary. Right now the Dictionary is based off of English word curation because I don't speak Italian, so it will be missing unique words.

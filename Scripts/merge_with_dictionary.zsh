@@ -5,15 +5,15 @@ IFS=$'\n\t'
 # Defaults (relative to repo layout: Scripts/../Data Sources)
 script_dir="${0:A:h}"
 repo_root="${script_dir:h}"
-DICT_DEFAULT="$repo_root/Data Sources/Dictionary.csv"
-NEW_DEFAULT="$repo_root/Data Sources/new_words.txt"
+DICT_DEFAULT=""
+NEW_DEFAULT=""
 
 dict="$DICT_DEFAULT"
 new_words="$NEW_DEFAULT"
 
 print_help() {
   cat <<'EOS'
-Usage: merge_new_with_dictionary.zsh [--dict <Dictionary.csv>] [--new <new_words.txt>]
+Usage: merge_with_dictionary.zsh [--dict <Dictionary.csv>] [--new <new_words.txt>]
 Appends new words into Dictionary.csv using header schema, backs up, de-dupes, sorts.
 EOS
 }
